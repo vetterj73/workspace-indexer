@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# runtime state — never index or commit these
+logs/
+data/
+.env
+config/workspace.yaml
+
+# Personal editor/session preferences, not project config
+.claude/settings.local.json

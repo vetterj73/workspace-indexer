@@ -1,0 +1,77 @@
+[project]
+name = "dirindex"
+version = "0.1.0"
+description = "Semantic + keyword index over a multi-repo workspace, built for LLM retrieval"
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+authors = [{ name = "Jeremy Vetter", email = "jvetter@intertech.com" }]
+
+dependencies = [
+    # config + models
+    "pydantic>=2.9",
+    "pydantic-settings>=2.5",
+    "pyyaml>=6.0",
+    # dense embeddings: one typed API over many providers
+    "pydantic-ai-slim[voyageai]>=2.33",
+    # reranking (and, later, multimodal) — not covered by pydantic-ai's embeddings API
+    "voyageai>=0.5",
+    # sparse BM25 + a light local dense model for offline/test use
+    "fastembed>=0.8",
+    # vector store
+    "qdrant-client>=1.19",
+    # parsing
+    "tree-sitter>=0.25",
+    "tree-sitter-language-pack>=1.15",
+    # discovery
+    "pathspec>=1.1",
+    # cli + logging
+    "typer>=0.27",
+    "structlog>=26.1",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+logfire = ["logfire>=4.0", "pydantic-ai-slim[logfire]>=2.33"]
+watch = ["watchfiles>=1.2"]
+pdf = ["pymupdf>=1.24"]
+
+[project.scripts]
+dirindex = "dirindex.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.7",
+    "pyright>=1.1.400",
+]
+
+[build-system]
+requires = ["poetry-core>=2.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+packages = [{ include = "dirindex", from = "src" }]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "integration: needs network or a running Qdrant server (deselect with -m 'not integration')",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.12"
+# Point pyright at the poetry venv, or every third-party import reads as
+# unresolved and buries the real diagnostics.
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "strict"

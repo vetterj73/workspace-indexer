@@ -1,0 +1,84 @@
+# Copy to config/workspace.yaml (gitignored) and edit for your machine.
+#
+# This file is *what to index* and is safe to commit. Credentials and backend
+# selection live in .env — see .env.example.
+
+workspace:
+  name: labbox
+  roots:
+    # A workspace root holding a mix of git repos and plain folders. With
+    # recurse_into_children, each immediate subdirectory becomes its own "unit",
+    # so `--unit repo_two` works for plain folders as well as repos.
+    - path: ~/src
+      recurse_into_children: true
+
+    # A specific directory indexed on its own. Hidden directories are fine —
+    # .claude is a primary target, not something to skip.
+    - path: ~/src/directory-indexing/.claude
+      label: claude-config
+
+index:
+  respect_gitignore: true
+  follow_symlinks: false
+  max_file_bytes: 1_048_576
+  # gitignore syntax. Our own logs/ and data/ are excluded unconditionally in
+  # code — a log file inside a watched root is an infinite reindex loop.
+  exclude:
+    - "**/node_modules/**"
+    - "**/.venv/**"
+    - "**/__pycache__/**"
+    - "**/dist/**"
+    - "**/build/**"
+    - "**/target/**"
+    - "**/.mypy_cache/**"
+    - "**/.pytest_cache/**"
+    - "**/.ruff_cache/**"
+
+chunking:
+  code:
+    max_tokens: 512
+    min_tokens: 24
+    include_context_header: true
+  markdown:
+    max_tokens: 512
+    split_on_heading_depth: 3
+  text:
+    max_tokens: 512
+    overlap_paragraphs: 1
+  opaque:
+    # Images and binaries are recorded in the manifest but not embedded.
+    # caption / multimodal are the declared upgrade paths.
+    mode: metadata_only
+
+search:
+  fusion: rrf            # rrf | dense_only | sparse_only (latter two for debugging)
+  prefetch_limit: 50
+  default_limit: 10
+  rerank:
+    enabled: true
+    model: rerank-2.5-lite
+    candidates: 50
+    top_n: 10
+    rerank_text: embed_text
+    # rerank-2.5* follow instructions but expose no instruction parameter, so
+    # this gets prepended to the query.
+    instruction: >
+      Prioritize implementation code over tests, fixtures, and generated files.
+    on_error: degrade    # degrade | fail
+
+eval:
+  dataset: ./config/eval.yaml
+  metrics: [recall@10, mrr@10]
+
+logging:
+  level: INFO
+  console: pretty        # pretty | json | off
+  file:
+    path: ./logs/dirindex.jsonl
+    max_bytes: 20_971_520
+    backup_count: 10
+  logfire:
+    enabled: false
+    # Leave false unless you accept that pydantic-ai instrumentation captures
+    # call inputs — and for an embedding call, the input is your source code.
+    send_to_cloud: false
