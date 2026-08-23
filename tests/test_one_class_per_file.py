@@ -9,7 +9,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-SRC = Path(__file__).resolve().parents[1] / "src" / "dirindex"
+SRC = Path(__file__).resolve().parents[1] / "src" / "workspace_indexer"
 
 # Deliberate exceptions go here, with a reason. Empty on purpose.
 ALLOWED_MULTI_CLASS: dict[str, str] = {}

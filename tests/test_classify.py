@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from dirindex.discovery.classify import classify, is_lockfile
-from dirindex.models import FileKind
+from workspace_indexer.discovery.classify import classify, is_lockfile
+from workspace_indexer.models import FileKind
 
 
 @pytest.mark.parametrize(

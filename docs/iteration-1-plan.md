@@ -66,7 +66,7 @@ workspace:
   roots:
     - path: ~/src
       recurse_into_children: true    # treat each child dir as its own unit
-    - path: ~/src/directory-indexing/.claude
+    - path: ~/src/workspace-indexer/.claude
       label: claude-config
 
 index:
@@ -114,7 +114,7 @@ logging:
   level: INFO
   console: pretty                     # pretty | json | off
   file:
-    path: ./logs/dirindex.jsonl
+    path: ./logs/workspace-indexer.jsonl
     max_bytes: 20_971_520             # 20 MB
     backup_count: 10
   logfire:
@@ -164,7 +164,7 @@ One `configure_logging(cfg)` called once from `cli.py`. `structlog` processes an
 
 Size-based rotation rather than time-based (`TimedRotatingFileHandler`) because indexer output is bursty — a full reindex produces a huge volume in minutes, then near-silence for days. Rotating on size keeps each file usefully sized; rotating daily would give you one enormous file and nine empty ones.
 
-JSONL because it makes the log queryable with tools already on the box — `jq 'select(.event=="embed.batch") | .duration_ms' logs/dirindex.jsonl` answers "how slow were my embedding calls" without any log-parsing code.
+JSONL because it makes the log queryable with tools already on the box — `jq 'select(.event=="embed.batch") | .duration_ms' logs/workspace-indexer.jsonl` answers "how slow were my embedding calls" without any log-parsing code.
 
 ### Contextvars: the thing that makes debugging actually work
 
@@ -189,7 +189,7 @@ JSONL because it makes the log queryable with tools already on the box — `jq '
 | `rerank.degraded` | WARNING | error, falling back to RRF order |
 | `error.*` | ERROR | full context + traceback, `rel_path` from contextvars |
 
-**Cost and token accounting is logged per batch and summarized per run**, because "why did this cost $40" needs to be answerable from the log alone. The run summary also lands in a SQLite `runs` table so `dirindex status` can show history without parsing logs.
+**Cost and token accounting is logged per batch and summarized per run**, because "why did this cost $40" needs to be answerable from the log alone. The run summary also lands in a SQLite `runs` table so `workspace-indexer status` can show history without parsing logs.
 
 ### Logfire — optional, off by default
 
@@ -240,8 +240,8 @@ class Chunk(BaseModel):
 The `source_text` / `embed_text` split matters: we embed an enriched string but return the real code. A method extracted from a class is meaningless in isolation, so `embed_text` gets a header:
 
 ```
-# repo: labbox/directory-indexing (main)
-# file: src/dirindex/storage/qdrant.py
+# repo: labbox/workspace-indexer (main)
+# file: src/workspace_indexer/storage/qdrant.py
 # class QdrantStore
 def upsert(self, chunks: list[Chunk]) -> None:
     ...
@@ -407,7 +407,7 @@ The reasoning for 1024 as the likely production answer:
 
 The reasoning for *embedding* at 2048 anyway:
 
-Matryoshka means the first 1024 entries of a 2048-d vector **are** a valid 1024-d embedding. So we can derive the 1024 collection from vectors we already have — no re-embedding, no additional API spend. Hence `dirindex reproject --dimensions 1024`: scroll the 2048 collection with `with_vectors=True`, truncate each dense vector (re-normalizing, so the same code is correct if we ever switch to dot-product distance), re-attach the existing sparse vector and payload, upsert into a new collection. Then run `dirindex eval` against both.
+Matryoshka means the first 1024 entries of a 2048-d vector **are** a valid 1024-d embedding. So we can derive the 1024 collection from vectors we already have — no re-embedding, no additional API spend. Hence `workspace-indexer reproject --dimensions 1024`: scroll the 2048 collection with `with_vectors=True`, truncate each dense vector (re-normalizing, so the same code is correct if we ever switch to dot-product distance), re-attach the existing sparse vector and payload, upsert into a new collection. Then run `workspace-indexer eval` against both.
 
 The risk is asymmetric, which decides it: going 2048 → 1024 is free, going 1024 → 2048 is a full re-embed of the whole workspace. Start high, measure, then narrow.
 
@@ -423,12 +423,12 @@ Every knob above — dimensions, `fusion`, `prefetch_limit`, rerank model, chunk
 
 ```yaml
 - query: "how does the file watcher decide between inotify and polling"
-  expect: ["src/dirindex/pipeline/watcher.py"]
+  expect: ["src/workspace_indexer/pipeline/watcher.py"]
 - query: "where do we set the BM25 IDF modifier"
-  expect: ["src/dirindex/storage/qdrant.py"]
+  expect: ["src/workspace_indexer/storage/qdrant.py"]
 ```
 
-`dirindex eval [--fusion X] [--rerank on|off] [--collection C]` reports recall@10 and MRR@10, and prints a per-query diff against the previous run so a regression is visible immediately. Writing the queries takes an hour and it is what makes every later tuning decision cheap.
+`workspace-indexer eval [--fusion X] [--rerank on|off] [--collection C]` reports recall@10 and MRR@10, and prints a per-query diff against the previous run so a regression is visible immediately. Writing the queries takes an hour and it is what makes every later tuning decision cheap.
 
 ---
 
@@ -492,14 +492,14 @@ SQLite over "just query Qdrant's payloads" because the hot path is millions of c
 ## Repository layout to create
 
 ```
-directory-indexing/
+workspace-indexer/
 ├── pyproject.toml
 ├── .env.example
 ├── README.md
 ├── config/workspace.example.yaml
 ├── logs/                           # gitignored, hardcoded-excluded from indexing
 ├── data/                           # gitignored, hardcoded-excluded from indexing
-├── src/dirindex/
+├── src/workspace_indexer/
 │   ├── cli.py                      # typer: index / search / status / explain
 │   ├── models.py                   # Chunk, ChunkMeta, FileRecord, SearchHit
 │   ├── config/{schema,settings,loader}.py
@@ -545,12 +545,12 @@ End-to-end but deliberately narrow:
 - Reranking via `rerank-2.5-lite` behind the `Reranker` protocol, with `NoopReranker` and all three graceful-disable paths.
 - Minimal eval harness plus `reproject` so the dimension question is answered by measurement.
 - CLI:
-  - `dirindex index [--root LABEL] [--dry-run] [--force]` — `--dry-run` prints the chunk plan and estimated token cost without calling the API, which is how we tune chunking without spending money.
-  - `dirindex search "query" [--repo R] [--lang L] [--kind K] [--fusion rrf|dense|sparse] [--rerank on|off] [--limit N]`
-  - `dirindex status` — files/chunks per root, spaces present, recent runs with token spend, skipped-file reasons.
-  - `dirindex explain PATH` — dump the chunks a single file produces. The chunk-quality debugging tool.
-  - `dirindex reproject --dimensions 1024` — derive a truncated Matryoshka collection with no re-embedding.
-  - `dirindex eval [--fusion X] [--rerank on|off] [--collection C]` — recall@10 / MRR@10 against `eval.yaml`.
+  - `workspace-indexer index [--root LABEL] [--dry-run] [--force]` — `--dry-run` prints the chunk plan and estimated token cost without calling the API, which is how we tune chunking without spending money.
+  - `workspace-indexer search "query" [--repo R] [--lang L] [--kind K] [--fusion rrf|dense|sparse] [--rerank on|off] [--limit N]`
+  - `workspace-indexer status` — files/chunks per root, spaces present, recent runs with token spend, skipped-file reasons.
+  - `workspace-indexer explain PATH` — dump the chunks a single file produces. The chunk-quality debugging tool.
+  - `workspace-indexer reproject --dimensions 1024` — derive a truncated Matryoshka collection with no re-embedding.
+  - `workspace-indexer eval [--fusion X] [--rerank on|off] [--collection C]` — recall@10 / MRR@10 against `eval.yaml`.
 
 **Not in iteration 1:** watcher, MCP server, PDF, image embedding, HTTP API, quantization.
 
@@ -575,6 +575,6 @@ Each of these is runnable at the end of the iteration:
 7. **Logging test.** Run an index against the fixture with a forced failure injected (unreadable file, mocked 429, a deliberately oversized chunk). Assert the JSONL file contains `embed.retry`, `embed.truncated`, and an `error.*` line, that every line carries `run_id`, and that failure lines carry `rel_path` from contextvars. Assert rotation works by setting `max_bytes` low and checking backups appear.
 8. **Reranker disable paths.** Three separate tests, because this is the requirement most likely to be quietly half-implemented: (a) `enabled: false` returns RRF order and logs nothing at WARNING; (b) `enabled: true` with `VOYAGE_API_KEY` unset returns results, logs `rerank.skipped` exactly once across many searches, and raises nothing; (c) a mocked API 500 with `on_error: degrade` returns RRF order and logs `rerank.degraded`, while `on_error: fail` raises. Plus a positive test with a stubbed reranker that reverses scores, asserting the returned order actually changed — otherwise a no-op bug passes every other test.
 9. **Matryoshka truncation.** Unit-test `reproject`: for a known 2048-d vector, assert the 1024-d output equals the normalized first 1024 components. Then index the fixture at 2048, reproject to 1024, and assert both collections have identical point counts and identical payloads, and that a search against each returns overlapping top hits. This proves the free-experiment path works before relying on it.
-10. **Real run against this machine.** Point `workspace.yaml` at `~/src` with `voyageai:voyage-code-4` at 2048. Run `dirindex index --dry-run` first to see the token estimate, then a real index, then `dirindex search "how does the file watcher decide between inotify and polling"` and confirm the top hits are the relevant files. `dirindex status` to sanity-check counts against `find | wc -l`, and `jq` the log for per-batch timings.
-11. **The dimension experiment — the deliverable that answers your question.** After the real index at 2048: `dirindex reproject --dimensions 1024`, then `dirindex eval` against both collections, and `dirindex eval --rerank off` against both. Four numbers. If 2048 doesn't clearly beat 1024 with reranking on, ship 1024 and reclaim the storage. Record the numbers in the README so the decision isn't re-argued later.
+10. **Real run against this machine.** Point `workspace.yaml` at `~/src` with `voyageai:voyage-code-4` at 2048. Run `workspace-indexer index --dry-run` first to see the token estimate, then a real index, then `workspace-indexer search "how does the file watcher decide between inotify and polling"` and confirm the top hits are the relevant files. `workspace-indexer status` to sanity-check counts against `find | wc -l`, and `jq` the log for per-batch timings.
+11. **The dimension experiment — the deliverable that answers your question.** After the real index at 2048: `workspace-indexer reproject --dimensions 1024`, then `workspace-indexer eval` against both collections, and `workspace-indexer eval --rerank off` against both. Four numbers. If 2048 doesn't clearly beat 1024 with reranking on, ship 1024 and reclaim the storage. Record the numbers in the README so the decision isn't re-argued later.
 12. **Both Qdrant modes.** Same index+search with `QDRANT_MODE=embedded`, then with a `qdrant/qdrant` container and `QDRANT_MODE=server`; confirm identical top hits.

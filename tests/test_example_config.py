@@ -13,7 +13,7 @@ from typing import Any
 
 import yaml
 
-from dirindex.config import WorkspaceConfig
+from workspace_indexer.config import WorkspaceConfig
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "config" / "workspace.example.yaml"
 

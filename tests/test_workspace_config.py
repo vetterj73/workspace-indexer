@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from dirindex.config import HARDCODED_EXCLUDES, WorkspaceConfig
+from workspace_indexer.config import HARDCODED_EXCLUDES, WorkspaceConfig
 
 
 def _minimal(**index: Any) -> dict[str, Any]:

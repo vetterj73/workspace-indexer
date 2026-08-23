@@ -14,7 +14,7 @@ workspace:
 
     # A specific directory indexed on its own. Hidden directories are fine —
     # .claude is a primary target, not something to skip.
-    - path: ~/src/directory-indexing/.claude
+    - path: ~/src/workspace-indexer/.claude
       label: claude-config
 
 index:
@@ -74,7 +74,7 @@ logging:
   level: INFO
   console: pretty        # pretty | json | off
   file:
-    path: ./logs/dirindex.jsonl
+    path: ./logs/workspace-indexer.jsonl
     max_bytes: 20_971_520
     backup_count: 10
   logfire:

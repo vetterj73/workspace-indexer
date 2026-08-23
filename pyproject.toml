@@ -1,8 +1,10 @@
 [project]
-name = "dirindex"
+name = "workspace-indexer"
 version = "0.1.0"
 description = "Semantic + keyword index over a multi-repo workspace, built for LLM retrieval"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12,<3.14"
 authors = [{ name = "Jeremy Vetter", email = "jvetter@intertech.com" }]
 
@@ -36,7 +38,7 @@ watch = ["watchfiles>=1.2"]
 pdf = ["pymupdf>=1.24"]
 
 [project.scripts]
-dirindex = "dirindex.cli:app"
+workspace-indexer = "workspace_indexer.cli:app"
 
 [dependency-groups]
 dev = [
@@ -51,7 +53,7 @@ requires = ["poetry-core>=2.0"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
-packages = [{ include = "dirindex", from = "src" }]
+packages = [{ include = "workspace_indexer", from = "src" }]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -66,6 +68,11 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.isort]
+# Without this, `workspace_indexer` sorts into third-party and `tests` lands in
+# a different group than the package it tests.
+known-first-party = ["workspace_indexer", "tests"]
 
 [tool.pyright]
 include = ["src", "tests"]

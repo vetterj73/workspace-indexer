@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from dirindex.config import Settings
+from workspace_indexer.config import Settings
 
 
 @pytest.fixture(autouse=True)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from dirindex.discovery import is_repo, read_repo_info
+from workspace_indexer.discovery import is_repo, read_repo_info
 
 
 def test_repo_metadata_is_populated(workspace: Path) -> None:

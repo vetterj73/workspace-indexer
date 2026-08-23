@@ -1,4 +1,4 @@
-# dirindex
+# workspace-indexer
 
 A hybrid (dense + BM25 sparse) index over a multi-repo workspace, built so an
 LLM can find code and docs by meaning instead of by grep. See
@@ -26,8 +26,8 @@ These are not preferences to weigh against other factors. Follow them.
   they feel cohesive.
 - To keep call sites readable under that rule, group the modules into a package
   and re-export from its `__init__.py`, so callers still write
-  `from dirindex.models import Chunk` rather than reaching into
-  `dirindex.models.chunk`.
+  `from workspace_indexer.models import Chunk` rather than reaching into
+  `workspace_indexer.models.chunk`.
 - `tests/test_one_class_per_file.py` enforces both halves of this. If it fails,
   fix the layout, not the test.
 
@@ -66,5 +66,5 @@ poetry run pytest -q                     # full suite
 poetry run pytest -m "not integration"   # skip anything needing network/Qdrant
 poetry run ruff check src/ tests/
 poetry run pyright                       # strict; must be 0 errors
-poetry run dirindex index --dry-run      # chunk plan + token estimate, no API calls
+poetry run workspace-indexer index --dry-run      # chunk plan + token estimate, no API calls
 ```

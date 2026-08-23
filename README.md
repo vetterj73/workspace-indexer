@@ -1,4 +1,4 @@
-# dirindex
+# workspace-indexer
 
 A hybrid (semantic + keyword) index over a multi-repo workspace, built so an LLM
 can find code and documentation by meaning instead of by grep.
@@ -14,7 +14,7 @@ See `config/workspace.example.yaml` and `.env.example` to get started.
 poetry install
 cp .env.example .env            # add VOYAGE_API_KEY
 cp config/workspace.example.yaml config/workspace.yaml
-poetry run dirindex index --dry-run
-poetry run dirindex index
-poetry run dirindex search "how does incremental reindexing decide to skip a file"
+poetry run workspace-indexer index --dry-run
+poetry run workspace-indexer index
+poetry run workspace-indexer search "how does incremental reindexing decide to skip a file"
 ```

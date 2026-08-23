@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 
-from dirindex.models import compute_chunk_id
+from workspace_indexer.models import compute_chunk_id
 
 
 def chunk_id(

@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from dirindex.config import WorkspaceConfig
+from workspace_indexer.config import WorkspaceConfig
 
 # What the `config_for` fixture hands back. Named so tests can annotate it
 # instead of accepting an untyped fixture argument.

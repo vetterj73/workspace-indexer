@@ -5,11 +5,11 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from dirindex.config import WorkspaceConfig
-from dirindex.discovery import Walker
-from dirindex.discovery.file_candidate import FileCandidate
-from dirindex.models import FileKind
 from tests.conftest import ConfigFactory
+from workspace_indexer.config import WorkspaceConfig
+from workspace_indexer.discovery import Walker
+from workspace_indexer.discovery.file_candidate import FileCandidate
+from workspace_indexer.models import FileKind
 
 
 def _by_path(config: WorkspaceConfig) -> dict[str, FileCandidate]:

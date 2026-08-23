@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from dirindex.discovery import IgnoreMatcher, SkipReason
+from workspace_indexer.discovery import IgnoreMatcher, SkipReason
 
 
 def test_config_exclude_matches(workspace: Path) -> None:
@@ -50,7 +50,7 @@ def test_gitignore_ignored_when_disabled(workspace: Path) -> None:
 def test_config_excludes_win_over_gitignore_being_off(workspace: Path) -> None:
     """Turning off gitignore must not disable our own hardcoded protections."""
     matcher = IgnoreMatcher(workspace, ["logs/**", "**/*.sqlite3"], respect_gitignore=False)
-    assert matcher.reason(workspace / "logs" / "dirindex.jsonl") is SkipReason.EXCLUDED
+    assert matcher.reason(workspace / "logs" / "workspace-indexer.jsonl") is SkipReason.EXCLUDED
     assert matcher.reason(workspace / "data" / "manifest.sqlite3") is SkipReason.EXCLUDED
 
 
