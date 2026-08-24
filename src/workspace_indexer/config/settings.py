@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     embedding_quantization: Literal["float32", "int8", "binary"] = "float32"
     embedding_batch_size: int = 64
     embedding_max_concurrency: int = 4
+    # Providers cap total tokens per request, not just document count: 64
+    # chunks that each happen to be huge fails the whole batch.
+    embedding_max_batch_tokens: int = 100_000
     voyage_api_key: str | None = None
 
     # ---- sparse ----

@@ -1,8 +1,8 @@
 # Workspace Indexer — Iteration 1 Plan
 
-> **Status.** Config, logging, discovery, the data models, and chunking are
-> built and on `main`. Embedding, storage, state, rerank, search, and the CLI
-> are not yet written. Where implementation taught us something the plan got wrong,
+> **Status.** Config, logging, discovery, the data models, chunking, and
+> embedding are built and on `main`. Storage, state, rerank, search, and the
+> CLI are not yet written. Where implementation taught us something the plan got wrong,
 > this document has been corrected rather than left as history — it is the
 > design of record, not a diary. Corrections are marked **[revised]**.
 
@@ -308,7 +308,7 @@ class Reranker(Protocol):
 
 `NoopReranker` implements the same protocol and returns `hits[:top_n]` unchanged. Everything downstream is written against `Reranker`, so "reranking off" is a different object, not a branch in the search path — there is no `if rerank_enabled:` scattered through the code.
 
-`text_pydantic_ai.py` wraps `pydantic_ai.Embedder` — construct from the `.env` model string, pass `dimensions` via `EmbeddingSettings`, delegate token counting. Batching, retry/backoff on 429, a concurrency semaphore, and the `embed.batch` / `embed.retry` / `embed.truncated` log events all live here, not in the pipeline.
+**[revised]** `pydantic_ai_backend.py` stays a thin adapter — one call is one request — and `embedding_service.py` owns batching, the concurrency semaphore, 429 backoff, truncation warnings and cost accounting. The plan had put all of that inside the provider adapter; hoisting it one layer up means it is written once instead of once per provider, and the local fastembed backend inherits it for free. Two settings that go on the *call* rather than the constructor: `dimensions` and `truncate`, because an `Embedder` supplied from outside would otherwise silently lose them. Batches are capped by token budget as well as document count, since providers limit total tokens per request and 64 large chunks fails the whole batch.
 
 **`storage/base.py`**
 
