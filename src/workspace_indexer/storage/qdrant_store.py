@@ -128,21 +128,52 @@ class QdrantStore:
                 f"{len(dense)} dense, {len(sparse)} sparse"
             )
 
+        await self.upsert_points(
+            space,
+            [chunk.chunk_id for chunk in chunks],
+            [list(vector) for vector in dense],
+            list(sparse),
+            [to_payload(chunk, space) for chunk in chunks],
+        )
+
+    async def upsert_points(
+        self,
+        space: EmbeddingSpace,
+        ids: Sequence[str],
+        dense: Sequence[Sequence[float]],
+        sparse: Sequence[SparseVec],
+        payloads: Sequence[dict[str, Any]],
+    ) -> None:
+        """Write points that did not come from a Chunk.
+
+        Reprojection carries an existing payload across rather than rebuilding
+        it, so it needs a way in that does not require re-chunking the file.
+        """
+        if not ids:
+            return
+        if not (len(ids) == len(dense) == len(sparse) == len(payloads)):
+            raise ValueError(
+                f"upsert size mismatch: {len(ids)} ids, {len(dense)} dense, "
+                f"{len(sparse)} sparse, {len(payloads)} payloads"
+            )
+
         await self.ensure_collection(space)
         name = self.collection_name(space)
 
         points = [
             models.PointStruct(
-                id=chunk.chunk_id,
+                id=point_id,
                 vector={
                     DENSE_VECTOR: list(dense_vector),
                     SPARSE_VECTOR: models.SparseVector(
                         indices=sparse_vector.indices, values=sparse_vector.values
                     ),
                 },
-                payload=to_payload(chunk, space),
+                payload=payload,
             )
-            for chunk, dense_vector, sparse_vector in zip(chunks, dense, sparse, strict=True)
+            for point_id, dense_vector, sparse_vector, payload in zip(
+                ids, dense, sparse, payloads, strict=True
+            )
         ]
 
         for start in range(0, len(points), self._batch_size):

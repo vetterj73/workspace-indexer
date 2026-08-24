@@ -101,6 +101,7 @@ def to_search_hit(point_id: str, score: float, payload: dict[str, Any]) -> Searc
         chunk_id=point_id,
         score=score,
         rel_path=str(payload.get("rel_path") or ""),
+        abs_path=str(payload.get("abs_path") or ""),
         root_label=str(payload.get("root_label") or ""),
         unit=str(payload.get("unit") or ""),
         repo_name=_optional_str(payload.get("repo_name")),

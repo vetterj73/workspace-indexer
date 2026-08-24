@@ -24,6 +24,15 @@ class VectorStore(Protocol):
         sparse: Sequence[SparseVec],
     ) -> None: ...
 
+    async def upsert_points(
+        self,
+        space: EmbeddingSpace,
+        ids: Sequence[str],
+        dense: Sequence[Sequence[float]],
+        sparse: Sequence[SparseVec],
+        payloads: Sequence[dict[str, object]],
+    ) -> None: ...
+
     async def delete_by_ids(self, space: EmbeddingSpace, chunk_ids: Sequence[str]) -> None: ...
 
     async def delete_by_path(

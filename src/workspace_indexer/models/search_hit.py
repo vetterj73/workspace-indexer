@@ -11,6 +11,9 @@ class SearchHit(BaseModel):
     chunk_id: str
     score: float
     rel_path: str
+    # Where the file actually is, so staleness can be checked without the
+    # search layer having to resolve root labels back to paths.
+    abs_path: str = ""
     root_label: str
     unit: str = ""
     repo_name: str | None = None

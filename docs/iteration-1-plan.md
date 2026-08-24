@@ -1,8 +1,9 @@
 # Workspace Indexer — Iteration 1 Plan
 
-> **Status.** Config, logging, discovery, the data models, chunking,
-> embedding, storage, reranking, and the state manifest are built and on
-> `main`. The search service and the CLI are not yet written. Where implementation taught us something the plan got wrong,
+> **Status.** Everything except the indexing pipeline and the CLI is built
+> and on `main`: config, logging, discovery, models, chunking, embedding,
+> storage, reranking, the state manifest, and the search path (fusion, rerank,
+> staleness, reprojection). Where implementation taught us something the plan got wrong,
 > this document has been corrected rather than left as history — it is the
 > design of record, not a diary. Corrections are marked **[revised]**.
 
