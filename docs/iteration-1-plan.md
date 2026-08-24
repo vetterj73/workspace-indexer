@@ -1,5 +1,11 @@
 # Workspace Indexer — Iteration 1 Plan
 
+> **Status.** Config, logging, discovery, and the data models are built and on
+> `main`. Chunking, embedding, storage, state, rerank, search, and the CLI are
+> not yet written. Where implementation taught us something the plan got wrong,
+> this document has been corrected rather than left as history — it is the
+> design of record, not a diary. Corrections are marked **[revised]**.
+
 ## Context
 
 We want a Python tool that keeps a semantic index of a *workspace* — a directory holding a mix of git repos, non-repo folders, and a `.claude/` tree of docs — so that an LLM (primarily Claude Code, via MCP) can find relevant code and documentation by meaning rather than by grep. The workspace root is not itself a repo; each child may or may not be one, and that fact is metadata we want to capture.
@@ -33,10 +39,24 @@ This file plans **iteration 1 only**, with later iterations sketched so the inte
 | Logging | `structlog` → console + rolling JSONL file; Logfire optional and off by default |
 | Quality measurement | Minimal eval harness in iteration 1 — the knobs above are too numerous to tune by feel |
 
+### Mandates
+
+Three rules bind every file in this repo. They live in `CLAUDE.md` and are
+enforced, not trusted:
+
+- **One class per file**, module named after the class in snake_case, grouped
+  into packages that re-export from `__init__.py` so call sites stay readable.
+  `tests/test_one_class_per_file.py` checks both layout and naming.
+- **Tests ship with the code**, in the same unit of work. A check worth running
+  in a shell is a check worth committing.
+- **pyright strict over `src/` and `tests/` alike**, zero errors. Strict mode on
+  tests is what catches an untyped fixture widening a parameter to `Any` and
+  thereby hiding real errors in the code under test.
+
 ### Library choices, with reasoning
 
-- **`pydantic-ai` for embeddings** — correct call. Its `Embedder` class takes a `provider:model` string and supports VoyageAI, OpenAI, Google, Cohere, Bedrock, and local sentence-transformers. `EMBEDDING_MODEL=voyageai:voyage-code-3` in `.env` is the entire provider abstraction. It also exposes `count_tokens()` / `max_input_tokens()` (needed to size chunks) and Voyage's `input_type` query/document distinction via settings. **Caveat: text-only.** Images need the `voyageai` SDK's separate `multimodal_embed()` endpoint — see "Images" below.
-- **`tree-sitter` + `tree-sitter-language-pack`** — `tree-sitter-languages` is unmaintained; the language-pack fork is the live successor with prebuilt wheels for 300+ grammars, so we never compile a grammar.
+- **`pydantic-ai` for embeddings** — correct call. Its `Embedder` class takes a `provider:model` string and supports VoyageAI, OpenAI, Google, Cohere, Bedrock, and local sentence-transformers. `EMBEDDING_MODEL=voyageai:voyage-code-4` in `.env` is the entire provider abstraction. It also exposes `count_tokens()` / `max_input_tokens()` (needed to size chunks) and Voyage's `input_type` query/document distinction via settings. **Caveat: text-only.** Images need the `voyageai` SDK's separate `multimodal_embed()` endpoint — see "Images" below.
+- **`tree-sitter` + `tree-sitter-language-pack`** — `tree-sitter-languages` is unmaintained; the language-pack fork is the live successor. **[revised]** It turns out to provide much more than grammars: `process()` returns symbol-aware `chunks` already carrying `context_path` (the enclosing class/module trail), `symbols_defined`, `chunk_index`/`total_chunks`, and a `has_error_nodes` flag, plus a hierarchical `structure` tree and `detect_language_from_path()`. That deletes the per-language node-type tables the plan budgeted for and lets iteration 1 cover *every* language instead of two. Two operational notes: `chunk_max_size` is in **bytes**, not tokens, and grammars are **downloaded on demand** to a local cache rather than bundled — so first use of a new language needs network, and a download failure must degrade to the text chunker rather than losing the file.
 - **`fastembed`** — Qdrant's own library, provides local BM25 sparse encoding with no API call and no cost. This is what makes hybrid search cheap enough to include in iteration 1.
 - **`voyageai` SDK** — needed *alongside* pydantic-ai, for two things pydantic-ai's embeddings API doesn't cover: `client.rerank()` and (later) `multimodal_embed()`. Dense text embedding still goes through pydantic-ai so the provider stays swappable; the Voyage SDK is only reached through the `Reranker` protocol, so a Cohere or local cross-encoder reranker drops in without touching the search path.
 - **`structlog`** — structured logging over the stdlib. Same event dict renders as pretty console output *and* as JSON lines to file, which is the whole requirement in one library.
@@ -175,7 +195,8 @@ JSONL because it makes the log queryable with tools already on the box — `jq '
 | Event | Level | Key fields |
 |---|---|---|
 | `run.start` / `run.end` | INFO | `run_id`, config hash, roots, embedding space, mode (index/dry-run), totals, wall time |
-| `discovery.skip` | DEBUG | `rel_path`, `reason` (gitignore / size cap / excluded / symlink / binary) |
+| `discovery.skip` | DEBUG | `rel_path`, `reason` (gitignored / excluded / too_large / symlink / lockfile / empty / unreadable) |
+| `discovery.prune` | DEBUG | **[revised, new]** `path`, `reason` — a directory not descended into. Counted separately from file skips because one pruned directory can stand for thousands of files, so folding the two together makes the file tally meaningless. |
 | `file.decision` | DEBUG | `rel_path`, `decision` (skip_mtime / skip_hash / chunk / force), `mtime_ns`, `sha256` |
 | `chunk.produced` | DEBUG | `rel_path`, chunker, chunk count, token histogram, parse_fallback flag |
 | `chunk.parse_failed` | **WARNING** | `rel_path`, language, error — a silent tree-sitter failure degrading to text chunking is exactly the bug you'd never notice |
@@ -264,10 +285,10 @@ class Chunker(Protocol):
 
 ```python
 class EmbeddingSpace(BaseModel):
-    model: str          # "voyageai:voyage-code-3"
+    model: str          # "voyageai:voyage-code-4"
     dimensions: int
     sparse_model: str   # "Qdrant/bm25"
-    def slug(self) -> str: ...   # "voyageai_voyage-code-3_1024" — collection name
+    def slug(self) -> str: ...   # "voyageai_voyage-code-4_2048" — collection name
 
 class EmbeddingBackend(Protocol):
     space: EmbeddingSpace
@@ -327,6 +348,7 @@ client.create_collection(
 |---|---|---|
 | `workspace` | keyword | multi-workspace separation |
 | `root_label` | keyword | which configured root — **indexed**, primary filter |
+| `unit` | keyword | **[revised, new]** the top-level subdirectory within the root — a repo *or* a plain folder. **Indexed.** This is the "search only Repo2" filter. A `repo_name` filter alone could not express it, because a workspace root holds non-repo folders that still need to be selectable, and they have no repo name. |
 | `rel_path` | keyword | display path and dedup key — **indexed** |
 | `file_name`, `ext` | keyword | "search only `.py`" / filename matching |
 | `kind` | keyword | code / markdown / pdf / text — **indexed** |
@@ -436,7 +458,7 @@ Every knob above — dimensions, `fusion`, `prefetch_limit`, rerank model, chunk
 
 | Kind | Strategy |
 |---|---|
-| **Code** | Tree-sitter parse; walk for definition nodes (function, method, class, interface, impl — a per-language node-type set). One chunk per definition; a body over `max_tokens` splits at top-level statement boundaries within it; consecutive tiny definitions merge up to `min_tokens`. Module-level code outside any definition (imports, constants, `main` guard) becomes a "preamble" chunk. Parse failure or unknown grammar → fall back to the text chunker and log `chunk.parse_failed` at WARNING; never drop the file. |
+| **Code** | **[revised]** `tree_sitter_language_pack.process()` with `chunk_max_size` derived from `max_tokens`; it already splits on definition boundaries and packs adjacent small definitions together. We map its output onto our `Chunk`: `context_path` → `symbol_path`, `symbols_defined` → `symbol_name`, and `has_error_nodes` → `parse_degraded` plus a `chunk.parse_failed` WARNING. Chunks below `min_tokens` are dropped (the parser emits a few degenerate ones). No grammar, a download failure, or a parse error → fall back to the text chunker; never drop the file. |
 | **Markdown** | Split on heading structure up to `split_on_heading_depth`; `symbol_path` is the heading trail (`## Setup > ### WSL`). Sections over `max_tokens` split on paragraph boundaries, repeating the heading trail in each part's header. Fenced code blocks are never split mid-block. |
 | **Text** | Paragraph-greedy packing to `max_tokens` with ~1-paragraph overlap. The universal fallback. |
 | **PDF** *(iteration 2)* | `pymupdf` text extraction → treat as markdown-ish, chunk by page and detected heading, record page number in `symbol_path`. A PDF with no text layer (a scan) is recorded as OPAQUE rather than silently indexed as empty; OCR is a later decision. |
@@ -446,11 +468,11 @@ Every knob above — dimensions, `fusion`, `prefetch_limit`, rerank model, chunk
 
 You can genuinely index images, but not with the same model as the code, and that has an architectural consequence worth deciding once.
 
-`voyage-multimodal-3` embeds text and images into a *shared* vector space, so a text query can retrieve a screenshot. But it is a different model on a different endpoint (`voyageai.Client.multimodal_embed()`, which pydantic-ai's text-only `Embedder` does not expose), which means a different vector space from `voyage-code-3`. **Vectors from different models are not comparable** — cosine distance between them is noise. So images cannot live in the same Qdrant collection as code.
+`voyage-multimodal-3` embeds text and images into a *shared* vector space, so a text query can retrieve a screenshot. But it is a different model on a different endpoint (`voyageai.Client.multimodal_embed()`, which pydantic-ai's text-only `Embedder` does not expose), which means a different vector space from `voyage-code-4`. **Vectors from different models are not comparable** — cosine distance between them is noise. So images cannot live in the same Qdrant collection as code.
 
 The design that handles this cleanly, and which the interfaces above already support:
 
-- One collection per `EmbeddingSpace.slug()`. Code and docs go in the `voyage-code-3` collection; if we later enable image indexing, images go in a `voyage-multimodal-3` collection.
+- One collection per `EmbeddingSpace.slug()`. Code and docs go in the `voyage-code-4` collection; if we later enable image indexing, images go in a `voyage-multimodal-3` collection.
 - Search fans out across registered spaces and merges by *rank* — the same RRF logic already used for dense+sparse fusion, reused rather than reinvented.
 
 This is real added complexity, so **iteration 1 does not embed images.** It records them in the manifest with dimensions and mtime, and the `opaque.mode` knob (`metadata_only` → `caption` → `multimodal`) is the declared upgrade path. The middle option — captioning an image with a vision model and embedding the *caption text* — is worth trying first, because it keeps one model, one space, one collection. Revisit once there are actual images in `.claude/` to test against.
@@ -501,20 +523,28 @@ workspace-indexer/
 ├── data/                           # gitignored, hardcoded-excluded from indexing
 ├── src/workspace_indexer/
 │   ├── cli.py                      # typer: index / search / status / explain
-│   ├── models.py                   # Chunk, ChunkMeta, FileRecord, SearchHit
-│   ├── config/{schema,settings,loader}.py
+│   ├── models/                     # [revised] a package, one class per module:
+│   │                               #   chunk, chunk_meta, chunk_id, file_kind,
+│   │                               #   repo_info, source_file, sparse_vec,
+│   │                               #   embedding_space, search_hit,
+│   │                               #   search_filters, run_stats, hashing
+│   ├── config/                     # [revised] likewise one class per module,
+│   │                               #   ~17 of them, plus settings.py (.env)
+│   │                               #   and excludes.py (hardcoded patterns)
 │   ├── obs/
 │   │   ├── logging.py              # structlog: console + RotatingFileHandler
 │   │   ├── context.py              # contextvars binding (run_id, rel_path)
 │   │   └── logfire_sink.py         # optional, guarded import
-│   ├── discovery/{walker,ignore,repo,classify}.py
+│   ├── discovery/                  # [revised] walker, ignore_matcher,
+│   │                               #   git_metadata, classify, skip_reason,
+│   │                               #   file_candidate
 │   ├── chunking/{base,registry,code,markdown,text,opaque}.py
 │   ├── embedding/{base,text_pydantic_ai,sparse_fastembed}.py
 │   ├── rerank/{base,voyage,noop}.py
 │   ├── storage/{base,qdrant}.py
 │   ├── state/{manifest,schema.sql}
 │   ├── search/{service,fusion,reproject}.py
-│   ├── eval/harness.py
+│   ├── evaluation/harness.py       # not `eval/`: shadows a builtin
 │   └── pipeline/indexer.py
 └── tests/
     ├── fixtures/workspace/         # 2 fake git repos + .claude/ with md + png
@@ -538,7 +568,7 @@ End-to-end but deliberately narrow:
 - **Logging first**, before any other module: structlog console + rolling JSONL, contextvars binding, the event table above, optional Logfire sink defaulting to off.
 - Config loading (`workspace.yaml` + `.env`) with validation and clear errors on a bad path.
 - Discovery over the configured roots: scandir walk, `.gitignore` + config excludes via `pathspec`, hardcoded excludes for `logs/` and `data/`, size cap, symlink policy, git metadata per root (read via one `git` subprocess per root, not per file).
-- Chunker registry live with **Python + TypeScript code**, **markdown**, **text fallback**, and the **opaque stub**. Other languages route to the text fallback; adding one is a node-type table entry, not new code.
+- **[revised]** Chunker registry live with **code (every language the pack ships)**, **markdown**, **text fallback**, and the **opaque stub**. The original plan scoped this to Python and TypeScript because it assumed hand-written node-type tables per language; `process()` removes that cost entirely. A startup `prefetch()` warms the grammar cache for the languages actually present in the workspace, so the download cost is paid once rather than mid-walk.
 - Dense embedding via `pydantic_ai.Embedder` (`voyageai:voyage-code-4` at 2048 dims from `.env`) with batching, concurrency cap, and 429 backoff; sparse via `fastembed` BM25, local and free.
 - Qdrant store with both named vectors, all payload indexes, embedded mode default and server mode via `QDRANT_MODE`.
 - SQLite manifest with the full decision ladder and the `runs` table.
@@ -566,7 +596,7 @@ End-to-end but deliberately narrow:
 
 Each of these is runnable at the end of the iteration:
 
-1. **No-API-key test suite.** `poetry run pytest`. The e2e test uses `sentence-transformers:all-MiniLM-L6-v2` plus fastembed BM25 and Qdrant embedded mode, so the full pipeline is exercised with no network and no cost. This is the main reason to want the provider abstraction working on day one.
+1. **No-API-key test suite.** `poetry run pytest`. **[revised]** Two local backends rather than one, because they answer different questions. `pydantic_ai.embeddings.TestEmbeddingModel` is free and instant but returns all-ones vectors, so it can only verify *plumbing* — batching, ids, upsert/delete accounting. For anything asserting that search returns semantically relevant results, use **fastembed's `BAAI/bge-small-en-v1.5`** (~130 MB ONNX, already a dependency for BM25) instead of `sentence-transformers`, which drags in PyTorch at roughly 2 GB for no added value here. Either way: no API key, no network at test time, no cost.
 2. **Golden chunk tests.** `tests/fixtures/workspace/` holds two synthetic repos (`git init`-ed in a tmp dir by a fixture, so `RepoInfo` is real) plus a `.claude/` tree with markdown and a PNG. Assertions on exact chunk boundaries, `symbol_path` values, and header contents for a known Python file — these catch chunking regressions, which are otherwise invisible.
 3. **Ignore-rule test.** Fixture contains `node_modules/` and `.venv/`; assert zero chunks from either, and assert a `.gitignore`d file in a repo is skipped while the same filename in the non-repo root is indexed. Separately assert `logs/` and `data/` are excluded even if a user adds them to `roots` — the loop-prevention guarantee.
 4. **Incremental correctness.** Index the fixture, record chunk count and manifest state. Re-run → assert zero embedding calls (spy the backend). Edit one function body → assert exactly one chunk deleted and one upserted. Delete a file → assert its chunks are gone from the store. Rename → assert old path's chunks removed, new path's added.
