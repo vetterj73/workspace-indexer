@@ -95,7 +95,7 @@ def test_defaults_are_usable_without_any_optional_sections() -> None:
         {"workspace": {"name": "w", "roots": [{"path": "/tmp/a"}]}}
     )
     assert config.search.fusion == "rrf"
-    assert config.search.rerank.model == "rerank-2.5-lite"
+    assert config.search.rerank.model == "voyageai:rerank-2.5-lite"
     assert config.chunking.code.max_tokens == 512
     assert config.logging.file is not None
     assert config.logging.logfire.send_to_cloud is False

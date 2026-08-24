@@ -36,7 +36,7 @@ class Settings(BaseSettings):
 
     # ---- reranking ----
     rerank_enabled: bool = True
-    rerank_model: str = "rerank-2.5-lite"
+    rerank_model: str = "voyageai:rerank-2.5-lite"
 
     # ---- vector store ----
     vector_store: Literal["qdrant"] = "qdrant"

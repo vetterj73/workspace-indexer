@@ -1,7 +1,7 @@
 # Workspace Indexer — Iteration 1 Plan
 
 > **Status.** Config, logging, discovery, the data models, chunking,
-> embedding, and storage are built and on `main`. State, rerank, search, and
+> embedding, storage, and reranking are built and on `main`. State, search, and
 > the CLI are not yet written. Where implementation taught us something the plan got wrong,
 > this document has been corrected rather than left as history — it is the
 > design of record, not a diary. Corrections are marked **[revised]**.
@@ -307,6 +307,14 @@ class Reranker(Protocol):
 ```
 
 `NoopReranker` implements the same protocol and returns `hits[:top_n]` unchanged. Everything downstream is written against `Reranker`, so "reranking off" is a different object, not a branch in the search path — there is no `if rerank_enabled:` scattered through the code.
+
+**[revised]** Between the protocol and the providers sits `ScoringReranker`, an ABC holding everything every reranker does: candidate capping, `embed_text`-vs-`source_text` selection, instruction prepending, score attachment and re-sort, `top_n` truncation, the degrade paths, and churn accounting. Providers differ in exactly one method — `_score(query, documents) -> list[float]` — and that one signature covers API *and* local implementations, because Voyage's reordered results-with-indices and a cross-encoder's in-order scores both reduce to a score per document. Each provider is then 15-25 lines.
+
+The template deliberately sits *below* the protocol rather than on it: if the interface carried these implementations, `NoopReranker` would inherit machinery it never runs.
+
+**[revised]** `rerank.model` is now `provider:model`, matching `EMBEDDING_MODEL`. A bare `rerank-2.5-lite` cannot say which provider serves it, so the original config could not express "use Cohere" or "use the local cross-encoder" at all — the abstraction was unusable in practice. A missing prefix is rejected by a field validator at config load, and an unknown provider fails with a message naming the known ones and how to add another.
+
+Three implementations ship: `VoyageReranker`, `LocalCrossEncoderReranker` (fastembed's ONNX cross-encoder — free, offline, and the reason the abstraction is proven rather than assumed), and `NoopReranker`. A generic HTTP adapter for unlisted vendors is a declared extension point but deliberately not built yet: guessing a response shape we cannot test against would be speculative code.
 
 **[revised]** `pydantic_ai_backend.py` stays a thin adapter — one call is one request — and `embedding_service.py` owns batching, the concurrency semaphore, 429 backoff, truncation warnings and cost accounting. The plan had put all of that inside the provider adapter; hoisting it one layer up means it is written once instead of once per provider, and the local fastembed backend inherits it for free. Two settings that go on the *call* rather than the constructor: `dimensions` and `truncate`, because an `Embedder` supplied from outside would otherwise silently lose them. Batches are capped by token budget as well as document count, since providers limit total tokens per request and 64 large chunks fails the whole batch.
 

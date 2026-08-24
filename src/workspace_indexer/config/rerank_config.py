@@ -4,12 +4,17 @@ from __future__ import annotations
 
 from typing import Literal
 
+from pydantic import field_validator
+
 from workspace_indexer.config.strict import Strict
 
 
 class RerankConfig(Strict):
     enabled: bool = True
-    model: str = "rerank-2.5-lite"
+    # `provider:model`, the same convention EMBEDDING_MODEL uses, so both
+    # layers read the same way. A bare model name cannot express which
+    # provider serves it, which is what made the abstraction unusable before.
+    model: str = "voyageai:rerank-2.5-lite"
     candidates: int = 50
     top_n: int = 10
     # The reranker benefits from the same context header the embedder gets: a
@@ -22,3 +27,23 @@ class RerankConfig(Strict):
     # fail: raise. Only the eval harness wants that — a silent degradation
     # there would quietly corrupt a measurement.
     on_error: Literal["degrade", "fail"] = "degrade"
+
+    @field_validator("model")
+    @classmethod
+    def _requires_a_provider(cls, value: str) -> str:
+        """Caught at config load rather than an hour into a run."""
+        if ":" not in value or not all(part.strip() for part in value.split(":", 1)):
+            raise ValueError(
+                f"rerank model {value!r} must be `provider:model`, "
+                "e.g. voyageai:rerank-2.5-lite or "
+                "fastembed:Xenova/ms-marco-MiniLM-L-6-v2"
+            )
+        return value
+
+    @property
+    def provider(self) -> str:
+        return self.model.split(":", 1)[0]
+
+    @property
+    def model_id(self) -> str:
+        return self.model.split(":", 1)[1]
