@@ -12,6 +12,9 @@ from workspace_indexer.models.repo_info import RepoInfo
 
 class SourceFile(BaseModel):
     root_label: str
+    # The top-level subdirectory of the root — a repo or a plain folder.
+    # Empty for files sitting directly in the root.
+    unit: str = ""
     abs_path: Path
     rel_path: str
     kind: FileKind

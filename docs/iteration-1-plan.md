@@ -1,8 +1,8 @@
 # Workspace Indexer — Iteration 1 Plan
 
-> **Status.** Config, logging, discovery, and the data models are built and on
-> `main`. Chunking, embedding, storage, state, rerank, search, and the CLI are
-> not yet written. Where implementation taught us something the plan got wrong,
+> **Status.** Config, logging, discovery, the data models, and chunking are
+> built and on `main`. Embedding, storage, state, rerank, search, and the CLI
+> are not yet written. Where implementation taught us something the plan got wrong,
 > this document has been corrected rather than left as history — it is the
 > design of record, not a diary. Corrections are marked **[revised]**.
 

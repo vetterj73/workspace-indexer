@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 
 from workspace_indexer.config import WorkspaceConfig
+from workspace_indexer.models import FileKind, RepoInfo, SourceFile, sha256_text
 
 # What the `config_for` fixture hands back. Named so tests can annotate it
 # instead of accepting an untyped fixture argument.
@@ -160,3 +161,35 @@ def config_for(workspace: Path) -> ConfigFactory:
         return WorkspaceConfig.model_validate(payload)
 
     return build
+
+
+def make_source(
+    text: str,
+    *,
+    kind: FileKind = FileKind.CODE,
+    language: str | None = "python",
+    rel_path: str = "src/widget.py",
+    root_label: str = "repo_one",
+    unit: str = "repo_one",
+    repo: RepoInfo | None = None,
+) -> SourceFile:
+    """A SourceFile without touching the filesystem.
+
+    Chunkers only read `.text`, `.kind`, `.language` and the metadata they copy
+    onto chunks, so a real file would add I/O without adding coverage. The
+    filesystem-facing behaviour is tested against real files in
+    test_file_reader.py instead.
+    """
+    return SourceFile(
+        root_label=root_label,
+        unit=unit,
+        abs_path=Path("/tmp") / rel_path,
+        rel_path=rel_path,
+        kind=kind,
+        language=language,
+        size=len(text.encode()),
+        mtime_ns=1,
+        sha256=sha256_text(text),
+        repo=repo,
+        text=text,
+    )
