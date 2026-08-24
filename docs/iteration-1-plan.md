@@ -1,8 +1,8 @@
 # Workspace Indexer — Iteration 1 Plan
 
 > **Status.** Config, logging, discovery, the data models, chunking,
-> embedding, storage, and reranking are built and on `main`. State, search, and
-> the CLI are not yet written. Where implementation taught us something the plan got wrong,
+> embedding, storage, reranking, and the state manifest are built and on
+> `main`. The search service and the CLI are not yet written. Where implementation taught us something the plan got wrong,
 > this document has been corrected rather than left as history — it is the
 > design of record, not a diary. Corrections are marked **[revised]**.
 
@@ -495,15 +495,28 @@ This is real added complexity, so **iteration 1 does not embed images.** It reco
 
 This is the mechanism behind "we don't need to rewrite the entire app to reindex."
 
-SQLite (`state/manifest.py`), three tables:
+SQLite (`state/manifest.py`), **[revised]** four tables rather than three:
 
 ```sql
 files (root_label, rel_path, abs_path, mtime_ns, size, sha256,
        kind, language, chunker_version, indexed_at,
        PRIMARY KEY (root_label, rel_path))
 
-chunks (chunk_id PRIMARY KEY, root_label, rel_path, space_slug,
-        embedded_at, token_count, FOREIGN KEY -> files)
+-- [revised] the key is the PAIR, not chunk_id alone: the same chunk exists
+-- in two spaces during a model swap, which is the entire point of being able
+-- to backfill a new collection without discarding the old one.
+chunks (chunk_id, space_slug, root_label, rel_path, content_sha,
+        token_count, embedded_at, PRIMARY KEY (chunk_id, space_slug),
+        FOREIGN KEY -> files ON DELETE CASCADE)
+
+-- [revised, new] Which spaces a file has been embedded into, and how many
+-- chunks it produced. chunk_count exists because a file that legitimately
+-- produces nothing -- an image, a binary -- is otherwise indistinguishable
+-- from a file whose chunks are missing, so rung 6 would re-chunk every binary
+-- on every single run, forever.
+file_spaces (root_label, rel_path, space_slug, chunk_count, embedded_at,
+        PRIMARY KEY (root_label, rel_path, space_slug),
+        FOREIGN KEY -> files ON DELETE CASCADE)
 
 runs (run_id PRIMARY KEY, started_at, finished_at, mode,
       files_seen, files_changed, chunks_upserted, chunks_deleted,
@@ -520,6 +533,12 @@ Per-file decision ladder, cheapest test first:
 6. Any file whose chunks lack a row for the *current* `space_slug` → embed into that space. **This is the model-swap path:** change `EMBEDDING_MODEL`, and the next run backfills a new collection without discarding the old one — no wipe, no code change.
 
 SQLite over "just query Qdrant's payloads" because the hot path is millions of cheap local existence checks, and because it survives the vector store being swapped out entirely. The `runs` table is what makes cost regressions visible over time rather than a surprise on the invoice.
+
+**[revised]** The manifest is deliberately **synchronous** while the rest of the pipeline is async. SQLite here is local single-file I/O measured in microseconds, and wrapping each of tens of thousands of tiny queries in `asyncio.to_thread` would cost more in executor hand-off than the queries themselves. Writes are batched into explicit transactions instead, since per-statement autocommit would fsync tens of thousands of times during a full index.
+
+`journal_mode=WAL` so an MCP server can read while the indexer writes; without it SQLite takes a global write lock and readers block.
+
+The ladder is split across two calls rather than one, because rungs 1, 4 and 6 are answerable from `stat()` alone while rung 2 needs the file read: `decide_from_stat()` then `decide_from_hash()`. Orphan detection is scoped to the root that was actually walked — indexing one root must not delete every other root's index.
 
 ---
 
