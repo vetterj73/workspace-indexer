@@ -1,8 +1,8 @@
 # Workspace Indexer — Iteration 1 Plan
 
-> **Status.** Config, logging, discovery, the data models, chunking, and
-> embedding are built and on `main`. Storage, state, rerank, search, and the
-> CLI are not yet written. Where implementation taught us something the plan got wrong,
+> **Status.** Config, logging, discovery, the data models, chunking,
+> embedding, and storage are built and on `main`. State, rerank, search, and
+> the CLI are not yet written. Where implementation taught us something the plan got wrong,
 > this document has been corrected rather than left as history — it is the
 > design of record, not a diary. Corrections are marked **[revised]**.
 
@@ -342,6 +342,8 @@ client.create_collection(
 
 `on_disk_payload=True` because we store `source_text` in the payload (see below) and it would otherwise dominate RAM.
 
+**[revised]** Payload indexes are a no-op in embedded Qdrant, and asking for them emits a warning per field — eleven per run. The store takes `payload_indexes` as an explicit flag, set false by the factory in embedded mode, rather than sniffing the client's internals. Filters still work there; large filtered searches simply scan.
+
 ### Payload fields
 
 | Field | Type | Purpose |
@@ -360,6 +362,8 @@ client.create_collection(
 | `symbol_kind`, `symbol_name` | keyword | filter to "classes only"; symbol_name aids exact-name lookup |
 | `start_line`, `end_line` | integer | **`file:line` anchoring — the single most valuable field for an LLM consumer** |
 | `source_text` | text | the actual chunk content |
+| `context_header` | text | **[revised]** only the header, not the whole `embed_text`. `embed_text` is header + source, so storing both would double the payload to hold a second copy of something already there; the header is prepended back on read, which is exact. |
+| `ancestors` | keyword list | **[revised, new]** every directory prefix of `rel_path`. Qdrant cannot prefix-match a keyword, and post-filtering a returned page would silently shrink the result set — ask for 10 hits under one directory and get 3. **Indexed.** |
 | `token_count` | integer | lets the MCP layer budget a response without re-tokenizing |
 | `content_sha` | keyword | staleness detection against disk |
 | `chunk_index`, `chunk_total` | integer | reassemble a split function; fetch neighbors for context expansion |
