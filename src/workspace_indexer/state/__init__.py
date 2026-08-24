@@ -4,5 +4,6 @@ from workspace_indexer.state.chunk_delta import ChunkDelta
 from workspace_indexer.state.file_record import FileRecord
 from workspace_indexer.state.index_decision import IndexDecision
 from workspace_indexer.state.manifest import Manifest
+from workspace_indexer.state.run_record import RunRecord
 
-__all__ = ["ChunkDelta", "FileRecord", "IndexDecision", "Manifest"]
+__all__ = ["ChunkDelta", "FileRecord", "IndexDecision", "Manifest", "RunRecord"]

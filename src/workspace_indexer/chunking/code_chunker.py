@@ -17,9 +17,10 @@ from collections.abc import Iterator
 import tree_sitter_language_pack as tslp
 
 from workspace_indexer.chunking.chunk_factory import build_chunk
+from workspace_indexer.chunking.context_header import header_token_cost
 from workspace_indexer.chunking.text_chunker import TextChunker
 from workspace_indexer.chunking.token_estimate import estimate_tokens, tokens_to_bytes
-from workspace_indexer.config import ChunkingSection
+from workspace_indexer.config import ChunkingSection, CodeChunking
 from workspace_indexer.models import Chunk, FileKind, SourceFile
 from workspace_indexer.obs.logging import get_logger
 
@@ -57,7 +58,7 @@ class CodeChunker:
                     comments=False,
                     docstrings=False,
                     diagnostics=False,
-                    chunk_max_size=tokens_to_bytes(settings.max_tokens, file.kind),
+                    chunk_max_size=tokens_to_bytes(self._budget(file, settings), file.kind),
                 ),
             )
         except Exception as exc:
@@ -145,6 +146,14 @@ class CodeChunker:
             # file someone may search for.
             log.debug("chunk.no_symbols", language=file.language)
             yield from self._degrade(file, config, reason="no_chunks")
+
+    @staticmethod
+    def _budget(file: SourceFile, settings: CodeChunking) -> int:
+        """max_tokens applies to what we embed, which is header + source."""
+        if not settings.include_context_header:
+            return settings.max_tokens
+        reserved = header_token_cost(file, file.kind)
+        return max(settings.min_tokens, settings.max_tokens - reserved)
 
     def _degrade(
         self, file: SourceFile, config: ChunkingSection, *, reason: str

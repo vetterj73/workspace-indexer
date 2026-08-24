@@ -39,6 +39,7 @@ class FakeEmbeddingBackend:
         self.concurrent = 0
         self.max_concurrent = 0
         self.exact_counts = 0
+        self.stats_documents = 0
 
     async def max_input_tokens(self) -> int | None:
         return self._max_tokens
@@ -56,6 +57,7 @@ class FakeEmbeddingBackend:
                 self._fail_times -= 1
                 raise self._error
             self.batches.append(list(texts))
+            self.stats_documents += len(texts)
             vectors = [self._vector(t) for t in texts]
             if self._drop_last and vectors:
                 vectors.pop()

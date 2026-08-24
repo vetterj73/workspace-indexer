@@ -386,16 +386,16 @@ def test_run_history_records_cost(manifest: Manifest) -> None:
 
     runs = manifest.recent_runs()
     assert len(runs) == 1
-    assert runs[0]["chunks_upserted"] == 42
-    assert runs[0]["est_cost_usd"] == pytest.approx(0.12)
-    assert runs[0]["config_hash"] == "abc123"
-    assert runs[0]["finished_at"] is not None
+    assert runs[0].chunks_upserted == 42
+    assert runs[0].est_cost_usd == pytest.approx(0.12)
+    assert runs[0].config_hash == "abc123"
+    assert runs[0].finished_at is not None
 
 
 def test_an_interrupted_run_stays_unfinished(manifest: Manifest) -> None:
     """A crashed run should be visible as such, not silently absent."""
     manifest.start_run(RunStats(run_id="run1", started_at=datetime.now(UTC)))
-    assert manifest.recent_runs()[0]["finished_at"] is None
+    assert manifest.recent_runs()[0].unfinished
 
 
 # ---- durability -------------------------------------------------------

@@ -62,3 +62,27 @@ def test_apply_header_prepends_and_leaves_source_untouched() -> None:
 def test_apply_header_is_a_no_op_when_disabled() -> None:
     """include_context_header: false must yield exactly the source."""
     assert apply_header("", "def f(): pass") == "def f(): pass"
+
+
+def test_header_cost_is_reserved_from_the_chunk_budget() -> None:
+    """max_tokens has to apply to what we embed, which is header + source.
+    Budgeting only the source silently overshoots by the header's size --
+    harmless against a 32K-token API model, but the tail of every large chunk
+    against a 512-token local one."""
+    from workspace_indexer.chunking.context_header import header_token_cost
+
+    file = make_source("body", repo=REPO)
+    cost = header_token_cost(file, FileKind.CODE)
+    assert 5 < cost < 100
+
+
+def test_header_cost_scales_with_the_header_that_will_be_built() -> None:
+    from workspace_indexer.chunking.context_header import header_token_cost
+
+    short = make_source("body", repo=None, root_label="a", rel_path="a.py")
+    long = make_source(
+        "body",
+        repo=RepoInfo(name="a-very-long-repository-name", branch="feature/some-long-branch"),
+        rel_path="src/deeply/nested/module/path/implementation.py",
+    )
+    assert header_token_cost(long, FileKind.CODE) > header_token_cost(short, FileKind.CODE)

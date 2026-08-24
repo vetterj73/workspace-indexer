@@ -24,6 +24,7 @@ from workspace_indexer.obs.logging import get_logger
 from workspace_indexer.state.chunk_delta import ChunkDelta
 from workspace_indexer.state.file_record import FileRecord
 from workspace_indexer.state.index_decision import IndexDecision
+from workspace_indexer.state.run_record import RunRecord
 
 log = get_logger("workspace_indexer.state.manifest")
 
@@ -329,9 +330,9 @@ class Manifest:
             ),
         )
 
-    def recent_runs(self, limit: int = 10) -> list[dict[str, object]]:
+    def recent_runs(self, limit: int = 10) -> list[RunRecord]:
         return [
-            dict(row)
+            RunRecord(**dict(row))
             for row in self._db.execute(
                 "SELECT * FROM runs ORDER BY started_at DESC LIMIT ?", (limit,)
             )

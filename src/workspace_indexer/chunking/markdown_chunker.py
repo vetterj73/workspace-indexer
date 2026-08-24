@@ -13,6 +13,7 @@ from collections.abc import Iterator
 
 from workspace_indexer.chunking.block_splitter import pack_blocks, split_into_blocks
 from workspace_indexer.chunking.chunk_factory import build_chunk
+from workspace_indexer.chunking.context_header import header_token_cost
 from workspace_indexer.chunking.token_estimate import estimate_tokens
 from workspace_indexer.config import ChunkingSection
 from workspace_indexer.models import Chunk, FileKind, SourceFile
@@ -34,11 +35,13 @@ class MarkdownChunker:
             return
 
         settings = config.markdown
+        # max_tokens applies to what we embed, which is header + source.
+        budget = max(1, settings.max_tokens - header_token_cost(file, file.kind))
         sections = self._sections(file.text, settings.split_on_heading_depth)
 
         for trail, start_line, body in sections:
             symbol_path = " > ".join(trail) if trail else None
-            if estimate_tokens(body, file.kind) <= settings.max_tokens:
+            if estimate_tokens(body, file.kind) <= budget:
                 yield build_chunk(
                     file,
                     self._workspace,
@@ -59,7 +62,7 @@ class MarkdownChunker:
             for block in blocks:
                 block.start_line += start_line - 1
                 block.end_line += start_line - 1
-            groups = pack_blocks(blocks, max_tokens=settings.max_tokens, kind=file.kind)
+            groups = pack_blocks(blocks, max_tokens=budget, kind=file.kind)
             total = len(groups)
             for index, group in enumerate(groups):
                 yield build_chunk(

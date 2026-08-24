@@ -1,9 +1,11 @@
 # Workspace Indexer — Iteration 1 Plan
 
-> **Status.** Everything except the indexing pipeline and the CLI is built
-> and on `main`: config, logging, discovery, models, chunking, embedding,
-> storage, reranking, the state manifest, and the search path (fusion, rerank,
-> staleness, reprojection). Where implementation taught us something the plan got wrong,
+> **Status.** Iteration 1 is complete and on `main`. Every layer is built,
+> wired through the CLI, and covered by tests that need no API key: config,
+> logging, discovery, models, chunking, embedding, storage, reranking, the
+> state manifest, the search path, the indexing pipeline, and the eval harness.
+> Remaining before this is genuinely useful day to day: the watcher
+> (iteration 2) and the MCP server (iteration 3). Where implementation taught us something the plan got wrong,
 > this document has been corrected rather than left as history — it is the
 > design of record, not a diary. Corrections are marked **[revised]**.
 
@@ -615,6 +617,8 @@ End-to-end but deliberately narrow:
   - `workspace-indexer eval [--fusion X] [--rerank on|off] [--collection C]` — recall@10 / MRR@10 against `eval.yaml`.
 
 **Not in iteration 1:** watcher, MCP server, PDF, image embedding, HTTP API, quantization.
+
+**[revised] Found by running it.** The `max_tokens` budget applied to `source_text`, but what gets embedded is header + source, so every large chunk overshot by roughly the header's size. Invisible against voyage-code-4's 32K context; against a 512-token local model it silently truncated the tail of the biggest chunks. `embed.truncated` is what surfaced it, which is the clearest argument for having built the logging first. All three chunkers now reserve the header's cost from the budget.
 
 ### Later iterations
 

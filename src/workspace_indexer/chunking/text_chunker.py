@@ -6,6 +6,7 @@ from collections.abc import Iterator
 
 from workspace_indexer.chunking.block_splitter import pack_blocks, split_into_blocks
 from workspace_indexer.chunking.chunk_factory import build_chunk
+from workspace_indexer.chunking.context_header import header_token_cost
 from workspace_indexer.config import ChunkingSection
 from workspace_indexer.models import Chunk, FileKind, SourceFile
 
@@ -31,10 +32,12 @@ class TextChunker:
             return
 
         settings = config.text
+        # max_tokens applies to what we embed, which is header + source.
+        budget = max(1, settings.max_tokens - header_token_cost(file, file.kind))
         blocks = split_into_blocks(file.text, respect_fences=False)
         groups = pack_blocks(
             blocks,
-            max_tokens=settings.max_tokens,
+            max_tokens=budget,
             kind=file.kind,
             overlap=settings.overlap_paragraphs,
         )
