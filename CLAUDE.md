@@ -2,7 +2,8 @@
 
 A hybrid (dense + BM25 sparse) index over a multi-repo workspace, built so an
 LLM can find code and docs by meaning instead of by grep. See
-`docs/iteration-1-plan.md` for the design and the reasoning behind it.
+`docs/iteration-1-plan.md` for the design and the reasoning behind it, and
+`docs/iteration-2-plan.md` for document classification and the MCP server.
 
 Layers, and the seam each one owns:
 

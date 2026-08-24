@@ -622,6 +622,11 @@ End-to-end but deliberately narrow:
 
 ### Later iterations
 
+> **[superseded]** The ordering below changed. Document classification and the
+> MCP server come next; see `docs/iteration-2-plan.md`. The watcher follows
+> them, because freshness matters only once an agent can actually reach the
+> index.
+
 - **2 — Watcher & breadth.** `watchfiles` with `/proc/mounts`-based polling fallback, debounce/coalesce, config hot-reload adding roots at runtime, inotify watch-count reporting, PDF chunker, more languages.
 - **3 — MCP server.** `search_code` and `get_file_context` tools. This is the primary consumer and it constrains result shape: hits must be token-budgeted (the `token_count` payload field exists for this), `file:line` anchored, and deduplicated by file so one query doesn't flood a context window. `chunk_index`/`chunk_total` enable context expansion around a hit.
 - **4 — Retrieval quality, round two.** Grow `eval.yaml` from a smoke test into a real dataset; settle the 2048-vs-1024 and `rerank-2.5`-vs-`-lite` questions against it; int8 quantization if storage bites; per-language chunk tuning; a local cross-encoder reranker as the offline/no-API-key option.
