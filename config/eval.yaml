@@ -1,0 +1,108 @@
+# Retrieval-quality dataset.
+#
+# Two groups, and the split is the point:
+#
+#   RETRIEVAL cases ask "can the index find a thing at all". They should already
+#   pass, and they are the regression net for chunking and fusion changes.
+#
+#   GUIDANCE cases are the iteration-2 argument. Each one asks the question an
+#   agent asks when it has been handed a work item on greenfield code: "how am I
+#   supposed to build this?" The right answer is a specification or a design
+#   document. The tempting wrong answers -- a changelog, a summary, a set of
+#   meeting notes -- sit in the SAME directory with the SAME vocabulary, which
+#   is why semantic similarity alone struggles to separate them and why a
+#   document type would.
+#
+# `expect` matches as a substring of rel_path, so a file moving within a
+# directory does not invalidate a case.
+#
+# Run:  workspace-indexer eval
+# Compare:  workspace-indexer eval --no-rerank      (is the reranker earning it?)
+#           workspace-indexer eval --fusion dense_only   (which branch found it?)
+
+# ---------------------------------------------------------------------------
+# RETRIEVAL — can it find things by meaning at all
+# ---------------------------------------------------------------------------
+
+- query: how does the indexer decide whether a file needs reindexing
+  expect: [state/manifest.py]
+  note: retrieval · the decision ladder, described nowhere by that name in the code
+
+- query: where do we set the BM25 inverse document frequency modifier
+  expect: [storage/qdrant_store.py]
+  note: retrieval · a rare literal; the sparse branch should carry this one
+
+- query: how are code chunks given their enclosing class or function name
+  expect: [chunking/code_chunker.py]
+  note: retrieval · symbol attribution, phrased without the word "symbol"
+
+- query: what stops a search result showing text that no longer matches the file
+  expect: [search/staleness.py]
+  note: retrieval · pure paraphrase, shares almost no vocabulary with the source
+
+- query: how do we avoid re-embedding a file that was only reformatted
+  expect: [state/manifest.py, chunking/file_reader.py]
+  note: retrieval · the content-hash rung
+
+- query: how is reranking turned off when there is no API key
+  expect: [rerank/reranker_factory.py, rerank/noop_reranker.py]
+  note: retrieval · the graceful-degradation path
+
+- query: truncating a vector to fewer dimensions without re-embedding
+  expect: [search/reprojector.py]
+  note: retrieval · Matryoshka, phrased without the jargon
+
+- query: why does a log line know which file caused it
+  expect: [obs/context.py]
+  note: retrieval · contextvars binding
+
+# ---------------------------------------------------------------------------
+# GUIDANCE — the iteration-2 case: no code to imitate, lead me with the rules
+# ---------------------------------------------------------------------------
+
+- query: how should I write Python for this project, what are the standards
+  expect: [PythonEngineeringStandards.md]
+  note: >
+    guidance · a genuine normative standards document. Competing against every
+    README and tutorial in the workspace.
+
+- query: what conventions must I follow when structuring a new module
+  expect: [workspace-indexer/CLAUDE.md]
+  note: >
+    guidance · the one-class-per-file, testing and typing mandates. A search for
+    "structure" pulls architecture prose; the mandates are what actually bind.
+
+- query: I need to add support for a new agent provider, how should it be designed
+  expect: [specs/pi-agent-support/design.md]
+  note: >
+    guidance · THE motivating case. design.md, requirements.md, plan.md,
+    summary.md and CHANGELOG.md all sit in this directory describing the same
+    feature. Only the design document answers "how should I build it".
+
+- query: what are the requirements for running agents concurrently in waves
+  expect: [specs/agent-waves/requirements.md]
+  note: >
+    guidance · requirements vs design vs summary, same directory, same subject.
+    A hard discrimination for similarity alone.
+
+- query: how should reusable hat definitions be imported from local files
+  expect: [specs/hat-imports/design.md]
+  note: guidance · design document, competing with its own rough-idea and requirements
+
+- query: how do I set up a development environment and submit a change
+  expect: [CONTRIBUTING.md]
+  note: >
+    guidance · deliberately a `guide`, not `normative`. If a type filter is ever
+    applied by default, this case is the one that catches it over-filtering.
+
+- query: what is the plan for adding lifecycle hooks to the orchestrator
+  expect: [specs/add-hooks-to-ralph-orchestrator-lifecycle/plan.md]
+  note: >
+    guidance · plan vs design vs CHANGELOG in one directory. "Plan" is the
+    discriminating word and the sparse branch should help.
+
+- query: how should this project handle logging and observability
+  expect: [docs/iteration-1-plan.md, workspace-indexer/CLAUDE.md]
+  note: >
+    guidance · our own design record. Competes with obs/logging.py itself, which
+    is the *implementation* rather than the guidance.
