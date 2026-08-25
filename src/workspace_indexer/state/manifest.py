@@ -233,6 +233,25 @@ class Manifest:
             "DELETE FROM files WHERE root_label = ? AND rel_path = ?", (root_label, rel_path)
         )
 
+    def forget_space(self, space_slug: str) -> int:
+        """Drop every record of one embedding space.
+
+        Used when a collection is deleted: without this the manifest still
+        believes the space exists, `status` reports collections that are gone,
+        and the backfill rung thinks those files are already complete.
+
+        The files themselves stay -- they may well be indexed in another space.
+        Returns the number of chunk rows removed.
+        """
+        row = self._db.execute(
+            "SELECT COUNT(*) AS n FROM chunks WHERE space_slug = ?", (space_slug,)
+        ).fetchone()
+        removed = int(row["n"])
+        self._db.execute("DELETE FROM chunks WHERE space_slug = ?", (space_slug,))
+        self._db.execute("DELETE FROM file_spaces WHERE space_slug = ?", (space_slug,))
+        log.info("state.space_forgotten", space=space_slug, chunks=removed)
+        return removed
+
     def orphans(self, seen: set[tuple[str, str]], root_label: str | None = None) -> list[
         tuple[str, str]
     ]:

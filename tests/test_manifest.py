@@ -481,3 +481,42 @@ def test_schema_sql_is_included_in_a_built_wheel(tmp_path: Path) -> None:
     assert wheels, "no wheel produced"
     names = zipfile.ZipFile(wheels[0]).namelist()
     assert "workspace_indexer/state/schema.sql" in names
+
+
+def test_forget_space_removes_only_that_space(manifest: Manifest) -> None:
+    """Deleting a collection must clear the manifest too, or status reports
+    collections that no longer exist and the backfill rung believes those files
+    are already complete."""
+    source = _source()
+    chunk = _chunk(source, "body")
+    _register(manifest, source, [chunk])
+    manifest.record_chunks([chunk], OTHER_SPACE)
+    manifest.record_space(source.root_label, source.rel_path, OTHER_SPACE, 1)
+
+    removed = manifest.forget_space(SPACE)
+    assert removed == 1
+    assert manifest.spaces() == [OTHER_SPACE]
+    assert manifest.chunk_count(SPACE) == 0
+    assert manifest.chunk_count(OTHER_SPACE) == 1
+
+
+def test_forget_space_keeps_the_files(manifest: Manifest) -> None:
+    """A file may well be indexed in another space; only its chunks go."""
+    source = _source()
+    _register(manifest, source, [_chunk(source, "body")])
+    manifest.forget_space(SPACE)
+    assert manifest.get_file(source.root_label, source.rel_path) is not None
+
+
+def test_forgotten_space_is_reindexed_rather_than_skipped(manifest: Manifest) -> None:
+    """The point of clearing file_spaces: the next run must backfill, not
+    decide the file is already done."""
+    source = _source()
+    _register(manifest, source, [_chunk(source, "body")])
+    manifest.forget_space(SPACE)
+    decision = _decide(manifest, _candidate(mtime_ns=source.mtime_ns, size=source.size))
+    assert decision is IndexDecision.BACKFILL_SPACE
+
+
+def test_forget_an_unknown_space_is_a_no_op(manifest: Manifest) -> None:
+    assert manifest.forget_space("never-existed") == 0
