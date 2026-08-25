@@ -1,0 +1,57 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A second push supersedes the first: no point finishing a run for a commit
+# nobody will merge.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install poetry
+        run: pipx install poetry
+
+      # Keyed on the lock file, so the cache is only rebuilt when dependencies
+      # actually change. onnxruntime and the tree-sitter grammars are large
+      # enough that this is the difference between a fast run and a slow one.
+      - name: Cache the virtualenv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-py312-${{ hashFiles('poetry.lock') }}
+
+      - name: Install dependencies
+        run: |
+          poetry config virtualenvs.in-project true
+          poetry install --all-extras
+
+      # Three separate steps rather than one, so a failure says which gate
+      # failed without anyone reading the log.
+      - name: Lint (ruff)
+        run: poetry run ruff check src/ tests/
+
+      - name: Types (pyright, strict)
+        run: poetry run pyright
+
+      # Deliberately excludes integration tests: those download embedding and
+      # reranking models, and nothing here needs an API key or network. That
+      # was a design goal from the first iteration and this is where it pays
+      # off -- the full suite runs on a clean runner with no credentials.
+      - name: Tests
+        run: poetry run pytest -q -m "not integration"
