@@ -138,3 +138,48 @@ def test_vanished_file_returns_none_rather_than_raising(tmp_path: Path) -> None:
     candidate = _candidate(path, FileKind.CODE, "python")
     path.unlink()
     assert read_source(candidate) is None
+
+
+def test_a_file_holding_a_credential_is_not_indexed(tmp_path: Path) -> None:
+    """The file is withheld entirely rather than redacted. A file holding a
+    live credential is not something to ship to an embedding API, and partial
+    redaction invites being clever about it."""
+    path = tmp_path / "settings.json"
+    token = "github" + "_pat_" + "11ABCDEFG0" + "z" * 30 + "Qw7"
+    path.write_text(f'{{"Authorization": "Bearer {token}"}}', encoding="utf-8")
+    assert read_source(_candidate(path, FileKind.TEXT)) is None
+
+
+def test_a_credential_in_source_code_is_withheld_too(tmp_path: Path) -> None:
+    path = tmp_path / "client.py"
+    key = "AK" + "IA" + "IOSFODNN7EXAMPLE"
+    path.write_text(f'AWS_KEY = "{key}"\n', encoding="utf-8")
+    assert read_source(_candidate(path, FileKind.CODE, "python")) is None
+
+
+def test_an_env_template_still_indexes(tmp_path: Path) -> None:
+    """Templates are useful to search and hold nothing."""
+    path = tmp_path / ".env.example"
+    path.write_text("VOYAGE_API_KEY=\nQDRANT_MODE=embedded\n", encoding="utf-8")
+    source = read_source(_candidate(path, FileKind.TEXT))
+    assert source is not None
+    assert source.text is not None
+
+
+def test_the_allow_list_waives_the_scan(tmp_path: Path) -> None:
+    """A high-entropy heuristic will occasionally flag a fixture. Silently
+    refusing to index it, with no way to override, is user-hostile."""
+    path = tmp_path / "fixture.json"
+    key = "AK" + "IA" + "IOSFODNN7EXAMPLE"
+    path.write_text(f'{{"token": "{key}"}}', encoding="utf-8")
+    candidate = _candidate(path, FileKind.TEXT)
+    assert read_source(candidate) is None
+    assert read_source(candidate, ["fixture.json"]) is not None
+
+
+def test_the_allow_list_is_scoped_not_global(tmp_path: Path) -> None:
+    """Allowing one file must not disable the check everywhere."""
+    path = tmp_path / "other.json"
+    key = "AK" + "IA" + "IOSFODNN7EXAMPLE"
+    path.write_text(f'{{"token": "{key}"}}', encoding="utf-8")
+    assert read_source(_candidate(path, FileKind.TEXT), ["fixture.json"]) is None

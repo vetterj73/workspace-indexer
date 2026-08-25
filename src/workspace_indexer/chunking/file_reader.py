@@ -11,11 +11,23 @@ decode is downgraded to OPAQUE rather than indexed as mojibake.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from fnmatch import fnmatch
+
 from workspace_indexer.discovery.file_candidate import FileCandidate
 from workspace_indexer.models import FileKind, SourceFile, sha256_text
 from workspace_indexer.obs.logging import get_logger
+from workspace_indexer.secrets import scan
 
 log = get_logger("workspace_indexer.chunking.reader")
+
+
+def _allowed(rel_path: str, patterns: Sequence[str] | None) -> bool:
+    """Whether the content scan is waived for this path."""
+    if not patterns:
+        return False
+    probe = "/" + rel_path.lstrip("/")
+    return any(fnmatch(probe, p) or fnmatch(rel_path, p) for p in patterns)
 
 # Kinds we never decode: reading them as text is meaningless and, for a large
 # binary, wasteful.
@@ -26,7 +38,9 @@ _NEVER_TEXT = frozenset({FileKind.IMAGE, FileKind.OPAQUE, FileKind.PDF})
 _SNIFF_BYTES = 8192
 
 
-def read_source(candidate: FileCandidate) -> SourceFile | None:
+def read_source(
+    candidate: FileCandidate, secret_allow: Sequence[str] | None = None
+) -> SourceFile | None:
     """None when the file vanished or became unreadable between the walk and
     now — a normal race on a live workspace, not an error."""
     try:
@@ -48,6 +62,21 @@ def read_source(candidate: FileCandidate) -> SourceFile | None:
             except UnicodeDecodeError as exc:
                 log.debug("read.binary_downgrade", reason="undecodable", error=str(exc.reason))
                 kind = FileKind.OPAQUE
+
+    if text is not None and not _allowed(candidate.rel_path, secret_allow):
+        findings = scan(text)
+        if findings:
+            # Skip the whole file rather than redacting the line. A file
+            # holding a live credential is not something to ship to an
+            # embedding API, and partial redaction invites being clever about
+            # it. The value is never logged -- only where it was and what
+            # shape it had.
+            log.warning(
+                "read.secret_withheld",
+                findings=[str(f) for f in findings],
+                detail="file not indexed; its contents would be sent to the embedding provider",
+            )
+            return None
 
     return SourceFile(
         root_label=candidate.root_label,

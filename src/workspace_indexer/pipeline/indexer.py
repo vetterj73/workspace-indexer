@@ -163,7 +163,7 @@ class Indexer:
             log.debug("file.decision", decision=decision.value)
             return None
 
-        source = read_source(candidate)
+        source = read_source(candidate, self._config.index.secret_allow)
         if source is None:
             # Vanished between the walk and now: a normal race on a live
             # workspace, not an error.
