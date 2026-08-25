@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic import Field
 
 from workspace_indexer.config.chunking_section import ChunkingSection
@@ -26,6 +28,21 @@ class WorkspaceConfig(Strict):
     @property
     def all_excludes(self) -> list[str]:
         return [*HARDCODED_EXCLUDES, *self.index.exclude]
+
+    @property
+    def excluded_paths(self) -> set[Path]:
+        """Specific files that must never be indexed, whatever the patterns say.
+
+        The eval dataset contains the query text of every case, which makes it a
+        perfect lexical *and* semantic match for its own queries. Indexing it
+        does not merely add noise: it puts the dataset at the top of its own
+        results and corrupts every measurement taken afterwards.
+
+        Derived rather than hardcoded because the path is configurable, but not
+        user-overridable for the same reason `logs/` is not: it is a correctness
+        rule, not a preference.
+        """
+        return {self.eval.dataset.expanduser().resolve()}
 
     def root_by_label(self, label: str) -> RootConfig:
         for root in self.workspace.roots:

@@ -35,6 +35,7 @@ _ALWAYS_SKIP_DIRS = frozenset({".git"})
 class Walker:
     def __init__(self, config: WorkspaceConfig) -> None:
         self._config = config
+        self._excluded_paths = config.excluded_paths
         # Files dropped, keyed by reason.
         self.skips: Counter[str] = Counter()
         # Directories not descended into. Tracked separately because one entry
@@ -116,6 +117,11 @@ class Walker:
         reason = matcher.reason(path)
         if reason is not None:
             self._skip(reason, path)
+            return None
+
+        if path.resolve() in self._excluded_paths:
+            # Our own operational files, by absolute path rather than pattern.
+            self._skip(SkipReason.EXCLUDED, path)
             return None
 
         if is_lockfile(path):

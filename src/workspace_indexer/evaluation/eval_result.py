@@ -5,6 +5,23 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 
+def path_matches(expected: str, path: str) -> bool:
+    """Does one returned path satisfy one expectation?
+
+    Substring, so a case survives a file moving within a directory.
+    Case-insensitive, because Linux paths are case-sensitive but a case
+    mismatch in a hand-written dataset is a typo rather than a meaningful
+    distinction -- and scoring a successful retrieval as a miss because the
+    dataset said CONTRIBUTING.md while the file is docs/contributing.md makes
+    the measurement lie.
+
+    Deliberately takes two strings rather than a string and a list: the two
+    call sites iterate in opposite directions, and a (str, list[str]) signature
+    lets them be swapped silently, since both orderings typecheck.
+    """
+    return expected.casefold() in path.casefold()
+
+
 class EvalResult(BaseModel):
     query: str
     expected: list[str]
@@ -17,7 +34,11 @@ class EvalResult(BaseModel):
     def recall(self) -> float:
         if not self.expected:
             return 0.0
-        hit = sum(1 for want in self.expected if any(want in got for got in self.found))
+        hit = sum(
+            1
+            for want in self.expected
+            if any(path_matches(want, got) for got in self.found)
+        )
         return hit / len(self.expected)
 
     @property

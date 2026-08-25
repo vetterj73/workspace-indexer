@@ -108,3 +108,27 @@ def test_malformed_case_is_rejected(tmp_path: Path) -> None:
 def test_case_model_requires_a_query() -> None:
     with pytest.raises(Exception, match="query"):
         EvalCase.model_validate({"expect": ["a.py"]})
+
+
+def test_expect_matching_is_case_insensitive() -> None:
+    """A dataset saying CONTRIBUTING.md must match docs/contributing.md.
+    Scoring a successful retrieval as a miss makes the measurement lie."""
+    assert _result(["CONTRIBUTING.md"], ["ralph/docs/contributing.md"]).recall == 1.0
+
+
+def test_first_hit_rank_is_also_case_insensitive() -> None:
+    """recall and rank iterate in opposite directions; both have to agree, or a
+    case gets full recall and a reciprocal rank of zero."""
+    result = _result(["CONTRIBUTING.md"], ["a.md", "docs/CONTRIBUTING.md"])
+    assert result.recall == 1.0
+    assert result.first_hit_rank == 2
+
+
+def test_match_direction_is_not_reversible() -> None:
+    """The expectation is a substring of the path, never the other way round.
+    A (str, list[str]) signature would let the arguments be swapped silently,
+    because both orderings typecheck."""
+    from workspace_indexer.evaluation.eval_result import path_matches
+
+    assert path_matches("manifest.py", "src/state/manifest.py")
+    assert not path_matches("src/state/manifest.py", "manifest.py")

@@ -161,3 +161,15 @@ def test_mtime_and_size_are_captured_for_the_manifest_fast_path(config_for: Conf
     candidate = _by_path(config_for())["repo_one/src/widget.py"]
     assert candidate.mtime_ns > 0
     assert candidate.size == candidate.abs_path.stat().st_size
+
+
+def test_configured_eval_dataset_is_never_walked(
+    config_for: ConfigFactory, workspace: Path
+) -> None:
+    """Our own operational files, excluded by absolute path rather than by
+    pattern, because the path is configurable."""
+    dataset = workspace / "plain_folder" / "eval.yaml"
+    dataset.write_text("- query: anything\n  expect: [x.py]\n", encoding="utf-8")
+    config = config_for(eval={"dataset": str(dataset)})
+    found = {c.rel_path for c in Walker(config).walk()}
+    assert "plain_folder/eval.yaml" not in found

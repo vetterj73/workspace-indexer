@@ -13,3 +13,6 @@ config/workspace.yaml
 
 # Personal editor/session preferences, not project config
 .claude/settings.local.json
+
+# MCP server config — contains API tokens
+.mcp.json

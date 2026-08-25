@@ -15,7 +15,7 @@ import yaml
 
 from workspace_indexer.evaluation.eval_case import EvalCase
 from workspace_indexer.evaluation.eval_report import EvalReport
-from workspace_indexer.evaluation.eval_result import EvalResult
+from workspace_indexer.evaluation.eval_result import EvalResult, path_matches
 from workspace_indexer.obs.logging import get_logger
 from workspace_indexer.search.search_request import SearchRequest
 from workspace_indexer.search.search_service import SearchService
@@ -89,6 +89,6 @@ class EvalHarness:
 
 def _first_rank(expected: list[str], found: list[str]) -> int | None:
     for position, path in enumerate(found, start=1):
-        if any(want in path for want in expected):
+        if any(path_matches(want, path) for want in expected):
             return position
     return None

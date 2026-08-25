@@ -99,3 +99,18 @@ def test_defaults_are_usable_without_any_optional_sections() -> None:
     assert config.chunking.code.max_tokens == 512
     assert config.logging.file is not None
     assert config.logging.logfire.send_to_cloud is False
+
+
+def test_eval_dataset_is_excluded_from_indexing() -> None:
+    """It contains the query text of every case, so indexing it puts the
+    dataset at the top of its own results and corrupts the measurement."""
+    config = WorkspaceConfig.model_validate(
+        {
+            "workspace": {"name": "w", "roots": [{"path": "/tmp/a", "label": "a"}]},
+            "eval": {"dataset": "./config/eval.yaml"},
+        }
+    )
+    excluded = config.excluded_paths
+    assert len(excluded) == 1
+    assert next(iter(excluded)).name == "eval.yaml"
+    assert next(iter(excluded)).is_absolute()
