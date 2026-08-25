@@ -17,14 +17,20 @@ from typing import Any, cast
 from workspace_indexer.models import EmbeddingSpace, SparseVec
 from workspace_indexer.obs.logging import get_logger
 from workspace_indexer.search.matryoshka import truncate
+from workspace_indexer.state import Manifest
 from workspace_indexer.storage.qdrant_store import DENSE_VECTOR, SPARSE_VECTOR, QdrantStore
 
 log = get_logger("workspace_indexer.search.reproject")
 
 
 class Reprojector:
-    def __init__(self, store: QdrantStore) -> None:
+    def __init__(self, store: QdrantStore, manifest: Manifest) -> None:
         self._store = store
+        # The manifest is not optional. Writing vectors without recording them
+        # leaves the store and the manifest disagreeing, and a later index
+        # cannot then tell which chunks already exist or clean up the ones that
+        # should not.
+        self._manifest = manifest
 
     async def reproject(
         self, source: EmbeddingSpace, dimensions: int, *, batch_size: int = 256
@@ -36,7 +42,9 @@ class Reprojector:
                 "only truncation is free"
             )
 
-        target = source.model_copy(update={"dimensions": dimensions})
+        target = source.model_copy(
+            update={"dimensions": dimensions, "derived_from": source.dimensions}
+        )
         await self._store.ensure_collection(target)
 
         ids: list[str] = []
@@ -66,11 +74,31 @@ class Reprojector:
             await self._store.upsert_points(target, ids, dense, sparse, payloads)
             moved += len(ids)
 
+        # Only after every vector has landed, matching the indexer's rule: a
+        # crash leaves work to redo rather than a manifest claiming chunks that
+        # were never stored.
+        recorded = self._manifest.copy_space(source.slug(), target.slug())
+        if recorded != moved:
+            # The source space was not fully tracked, so the target cannot be
+            # either. Saying so is the whole point: an untracked collection is
+            # invisible to orphan cleanup, which is how stale content ends up
+            # stranded in a live collection.
+            log.warning(
+                "reproject.untracked",
+                source=source.slug(),
+                target=target.slug(),
+                points=moved,
+                recorded=recorded,
+                detail="manifest does not fully track the source space; "
+                "the derived collection will not be cleaned up correctly",
+            )
+
         log.info(
             "reproject.done",
             source=source.slug(),
             target=target.slug(),
             points=moved,
+            recorded=recorded,
             dimensions=dimensions,
         )
         return target

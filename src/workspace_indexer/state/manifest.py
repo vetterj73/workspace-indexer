@@ -233,6 +233,41 @@ class Manifest:
             "DELETE FROM files WHERE root_label = ? AND rel_path = ?", (root_label, rel_path)
         )
 
+    def copy_space(self, source_slug: str, target_slug: str) -> int:
+        """Record that every chunk in one space now also exists in another.
+
+        Reprojection derives a narrower collection from vectors already paid
+        for, deliberately preserving chunk ids. Without copying these rows the
+        manifest has no record of the target space at all, so a later index
+        cannot tell which chunks are already present and orphan cleanup cannot
+        see them — which is how stale content ends up stranded in a live
+        collection.
+
+        Returns the number of chunk rows written.
+        """
+        self._db.execute(
+            "INSERT INTO chunks (chunk_id, space_slug, root_label, rel_path, "
+            "content_sha, token_count, embedded_at) "
+            "SELECT chunk_id, ?, root_label, rel_path, content_sha, token_count, ? "
+            "FROM chunks WHERE space_slug = ? "
+            "ON CONFLICT (chunk_id, space_slug) DO UPDATE SET "
+            "content_sha = excluded.content_sha, token_count = excluded.token_count, "
+            "embedded_at = excluded.embedded_at",
+            (target_slug, _now(), source_slug),
+        )
+        self._db.execute(
+            "INSERT INTO file_spaces (root_label, rel_path, space_slug, chunk_count, "
+            "embedded_at) "
+            "SELECT root_label, rel_path, ?, chunk_count, ? "
+            "FROM file_spaces WHERE space_slug = ? "
+            "ON CONFLICT (root_label, rel_path, space_slug) DO UPDATE SET "
+            "chunk_count = excluded.chunk_count, embedded_at = excluded.embedded_at",
+            (target_slug, _now(), source_slug),
+        )
+        copied = self.chunk_count(target_slug)
+        log.info("state.space_copied", source=source_slug, target=target_slug, chunks=copied)
+        return copied
+
     def forget_space(self, space_slug: str) -> int:
         """Drop every record of one embedding space.
 
