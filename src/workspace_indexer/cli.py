@@ -229,9 +229,15 @@ def explain(
 
         chunker = ctx.registry.resolve(source, ctx.config.chunking)
         chunks = list(chunker.chunk(source, ctx.config.chunking))
+        verdict = ctx.classifier.classify(source)
         console.print(
             f"[bold]{source.rel_path}[/bold] · {source.kind.value}"
             f" · {source.language or 'no grammar'} · chunker [cyan]{chunker.name}[/cyan]"
+        )
+        console.print(
+            f"type [cyan]{verdict.doc_type.value}[/cyan]"
+            f" · confidence {verdict.confidence:.2f}"
+            f" · [dim]{verdict.reason}[/dim]"
         )
         if not chunks:
             console.print("[yellow]No chunks: recorded in the manifest but not embedded.[/yellow]")

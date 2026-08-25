@@ -277,7 +277,26 @@ Verification beyond the eval:
 - Deleting the reranker `instruction` hack does not regress the eval, because
   `test` and `generated` are now filtered properly.
 
-## Open questions
+## Open questions — resolved
+
+**Where do `.claude/` files sit? → `normative`.** They bind how work is done in
+a repository, which is what `find_guidance` should surface for "what
+conventions apply here". A separate `meta` category would fragment the taxonomy
+for no retrieval benefit, and the eval case *"what conventions must I follow
+when structuring a new module"* expects `CLAUDE.md`, which settles it.
+
+**Should `doc_type` be multi-valued? → the question dissolves.** Qdrant keyword
+payload fields accept arrays natively and `MatchValue` matches membership —
+proven by our own `ancestors` field, which is already a list under a `KEYWORD`
+index. So storing a single string now and a list later is a change in what we
+write, not a schema migration. Single-valued to start, with no trap.
+
+**Should the type appear in the embedded text? → still open, deliberately.**
+Testable with the eval harness once results are persisted (#1). Note it changes
+what is embedded but not chunk identity, since the header is excluded from
+`content_sha` — so trying it costs a re-embed and nothing else.
+
+## Remaining open questions
 
 - Where do `.claude/` files sit? They are instructions to an agent, which is
   arguably `normative`, but they are about *how to work* rather than *what to

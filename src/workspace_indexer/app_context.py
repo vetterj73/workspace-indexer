@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from workspace_indexer.chunking import ChunkerRegistry
+from workspace_indexer.classification import DocumentClassifier, RuleClassifier
 from workspace_indexer.config import (
     LoggingConfig,
     Settings,
@@ -45,6 +46,7 @@ class AppContext:
     sparse: SparseBackend
     store: QdrantStore
     reranker: Reranker
+    classifier: DocumentClassifier
 
     @classmethod
     def build(cls, config_path: Path | None = None) -> AppContext:
@@ -65,6 +67,7 @@ class AppContext:
             sparse=build_sparse_backend(settings),
             store=build_vector_store(settings, config.workspace.name),
             reranker=build_reranker(config.search.rerank, settings),
+            classifier=RuleClassifier(),
         )
 
     def indexer(self) -> Indexer:
