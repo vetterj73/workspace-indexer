@@ -34,6 +34,13 @@ index:
     - "**/.pytest_cache/**"
     - "**/.ruff_cache/**"
 
+  # Paths where the content secret-scan is expected to produce false
+  # positives: fixtures holding synthetic tokens, files of checksums. Scoped
+  # by glob, so allowing one file does not disable the check elsewhere.
+  secret_allow:
+    - "**/tests/test_secret_scanner.py"
+    - "**/tests/test_file_reader.py"
+
 chunking:
   code:
     max_tokens: 512

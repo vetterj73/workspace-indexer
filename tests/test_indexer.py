@@ -246,11 +246,11 @@ async def test_one_bad_file_does_not_abort_the_run(
     original = module.read_source
     calls = {"n": 0}
 
-    def sometimes_explode(candidate: object):  # noqa: ANN202
+    def sometimes_explode(candidate: object, secret_allow: object = None):  # noqa: ANN202
         calls["n"] += 1
         if calls["n"] == 2:
             raise OSError("simulated read failure")
-        return original(candidate)  # type: ignore[arg-type]
+        return original(candidate, secret_allow)  # type: ignore[arg-type]
 
     monkeypatch.setattr(module, "read_source", sometimes_explode)
     stats = await harness.indexer().run()
