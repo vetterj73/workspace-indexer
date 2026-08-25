@@ -18,7 +18,8 @@ Corpus: `~/src`, 1,004 files, 10,702 chunks. 16 eval cases, RRF fusion,
 | 1 | `fastembed:BAAI/bge-small-en-v1.5` @384 | local cross-encoder | 0.781 | 0.582 | 4 |
 | 2 | `voyageai:voyage-code-4` @2048 | local cross-encoder | 0.844 | 0.669 | 3 |
 | 3 | `voyageai:voyage-code-4` @2048 | `voyageai:rerank-2.5-lite` | **0.875** | **0.760** | 3 |
-| 4 | `voyageai:voyage-code-4` @1024 | `voyageai:rerank-2.5-lite` | **0.875** | **0.760** | 3 |
+| 4 | `voyageai:voyage-code-4` @1024 *(truncated)* | `voyageai:rerank-2.5-lite` | **0.875** | 0.760 | 3 |
+| 5 | `voyageai:voyage-code-4` @1024 *(native)* | `voyageai:rerank-2.5-lite` | **0.875** | 0.698 | 3 |
 
 One variable changes per row, so each delta is attributable.
 
@@ -31,7 +32,18 @@ the embedder matters more for *finding* the document and the reranker for
 *ranking it first*, which is exactly the division of labour the design assumed.
 
 **2048 dimensions buy nothing over 1024 here.** Runs 3 and 4 are identical to
-three decimal places on every case. This is the question the iteration-1 plan
+three decimal places on every case.
+
+**Truncated and natively-embedded 1024 are equivalent too**, within what this
+dataset can resolve. Run 4 truncates a 2048 vector; run 5 asks Voyage for 1024
+directly. Recall is identical at 0.875. The MRR gap of 0.062 is exactly two
+cases moving from rank 1 to rank 2 — each such move is worth 0.5/16 = 0.031 —
+which is noise at this sample size, not a signal about Matryoshka.
+
+That is worth recording as a limit of the measurement rather than a result:
+**16 cases cannot resolve differences of this size.** Any future comparison
+landing within roughly ±0.06 MRR should be treated as a tie until the dataset
+is larger. This is the question the iteration-1 plan
 flagged and deliberately deferred to measurement, and the answer on this corpus
 is that the wider vector is pure storage cost.
 
@@ -40,9 +52,25 @@ the dense branch only has to land the right chunk somewhere in the candidate
 set, and extra dimensions mainly sharpen fine-grained ranking precision -- the
 work the reranker is already doing.
 
-**Recommendation: index at 2048 and serve from the 1024 reprojection.** The
-asymmetry still holds -- 2048 → 1024 is free, 1024 → 2048 is a full re-embed --
-so indexing wide preserves the option at no ongoing cost.
+**Recommendation: set `EMBEDDING_DIMENSIONS=1024` and index once.**
+
+An earlier version of this document recommended indexing at 2048 and serving
+from the 1024 reprojection, to preserve the option of testing other widths for
+free. That reasoning was sound when a re-embed meant 2h 40m on a local CPU
+model. It is wrong now:
+
+| | Cost |
+|---|---|
+| Keeping the 2048 collection for option value | **227 MB** on disk |
+| Simply re-indexing at another width | **2m 35s**, $0.00 |
+
+Paying 227 MB to avoid a 155-second job is not a trade worth making. If you
+ever want to evaluate 512, re-index — it is faster than reasoning about it.
+
+Reprojection earned its place by *answering* this question without spending
+anything, and it remains the right tool where re-embedding is genuinely
+expensive: a corpus large enough for a full index to take hours, or a paid tier
+where the tokens are not free. Neither applies at this scale.
 
 ## Timings, same corpus
 
@@ -87,14 +115,18 @@ it is stronger than it was before these runs.
 
 ## Reproducing
 
+The recommended configuration, after the above:
+
 ```bash
 # .env
 EMBEDDING_MODEL=voyageai:voyage-code-4
-EMBEDDING_DIMENSIONS=2048
+EMBEDDING_DIMENSIONS=1024
 VOYAGE_API_KEY=...
 
 workspace-indexer index
-workspace-indexer eval                       # run 3
-workspace-indexer reproject --dimensions 1024
-workspace-indexer eval --dimensions 1024     # run 4
+workspace-indexer eval
 ```
+
+To reproduce the four comparison runs, set `EMBEDDING_DIMENSIONS=2048`, index,
+then `workspace-indexer reproject --dimensions 1024` and
+`workspace-indexer eval --dimensions 1024`.
