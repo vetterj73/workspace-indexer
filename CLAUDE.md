@@ -67,5 +67,8 @@ poetry run pytest -q                     # full suite
 poetry run pytest -m "not integration"   # skip anything needing network/Qdrant
 poetry run ruff check src/ tests/
 poetry run pyright                       # strict; must be 0 errors
+
+# All three run in CI on every push and PR (.github/workflows/ci.yml),
+# with no API key and no network. If it passes locally it passes there.
 poetry run workspace-indexer index --dry-run      # chunk plan + token estimate, no API calls
 ```
