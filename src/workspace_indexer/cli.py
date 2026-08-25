@@ -147,15 +147,41 @@ def status(config: ConfigOption = None) -> None:
             spaces.add_column("space")
             spaces.add_column("chunks", justify="right")
             spaces.add_column("stored", justify="right")
-            for slug in ctx.manifest.spaces():
+
+            prefix = f"{ctx.config.workspace.name}__"
+            collections = {
+                name.removeprefix(prefix)
+                for name in await ctx.store.collection_names()
+                if name.startswith(prefix)
+            }
+            tracked = set(ctx.manifest.spaces())
+            warnings: list[str] = []
+
+            for slug in sorted(tracked):
                 active = slug == ctx.space.slug()
+                recorded = ctx.manifest.chunk_count(slug)
                 stored = await ctx.store.count(ctx.space) if active else None
+                if stored is not None and stored != recorded:
+                    # Divergence has to announce itself. Printing two numbers
+                    # side by side and hoping someone notices is how stale
+                    # content sat in a live collection unremarked.
+                    warnings.append(
+                        f"{slug}: manifest has {recorded:,} chunks, store has {stored:,}"
+                    )
                 spaces.add_row(
                     slug + (" [green](active)[/green]" if active else ""),
-                    f"{ctx.manifest.chunk_count(slug):,}",
+                    f"{recorded:,}",
                     "-" if stored is None else f"{stored:,}",
                 )
             console.print(spaces)
+
+            for slug in sorted(tracked - collections):
+                warnings.append(f"{slug}: recorded in the manifest but no collection exists")
+            for slug in sorted(collections - tracked):
+                warnings.append(f"{slug}: collection exists but nothing is recorded for it")
+
+            for warning in warnings:
+                console.print(f"[yellow]inconsistent[/yellow] {warning}")
 
             runs = Table(title="recent runs")
             for column in ("run", "mode", "files", "written", "removed", "tokens", "cost"):
@@ -235,7 +261,9 @@ def reproject(
     async def run() -> None:
         ctx = _context(config)
         try:
-            target = await Reprojector(ctx.store).reproject(ctx.space, dimensions)
+            target = await Reprojector(ctx.store, ctx.manifest).reproject(
+                ctx.space, dimensions
+            )
             console.print(
                 f"Wrote [cyan]{ctx.store.collection_name(target)}[/cyan] "
                 f"({await ctx.store.count(target):,} points) from "
@@ -265,8 +293,14 @@ def evaluate(
         ctx = _context(config)
         try:
             cases = load_cases(dataset or ctx.config.eval.dataset)
+            # A reprojected collection is a distinct space, so it has to be
+            # addressed as one rather than by width alone.
             space = (
-                ctx.space.model_copy(update={"dimensions": dimensions}) if dimensions else None
+                ctx.space.model_copy(
+                    update={"dimensions": dimensions, "derived_from": ctx.space.dimensions}
+                )
+                if dimensions
+                else None
             )
             label = f"{(space or ctx.space).slug()} fusion={fusion or ctx.config.search.fusion}"
             report = await EvalHarness(ctx.search_service(space)).run(

@@ -520,3 +520,58 @@ def test_forgotten_space_is_reindexed_rather_than_skipped(manifest: Manifest) ->
 
 def test_forget_an_unknown_space_is_a_no_op(manifest: Manifest) -> None:
     assert manifest.forget_space("never-existed") == 0
+
+
+def test_copy_space_duplicates_the_rows_under_a_new_slug(manifest: Manifest) -> None:
+    """Reprojection derives a narrower collection from vectors already paid
+    for, preserving chunk ids. The manifest has to learn about the new space or
+    a later index cannot tell which chunks exist."""
+    source = _source()
+    chunks = [_chunk(source, f"body {i}", i) for i in range(4)]
+    _register(manifest, source, chunks)
+
+    copied = manifest.copy_space(SPACE, OTHER_SPACE)
+    assert copied == 4
+    assert manifest.chunk_count(SPACE) == 4
+    assert manifest.chunk_count(OTHER_SPACE) == 4
+    assert sorted(manifest.spaces()) == sorted([SPACE, OTHER_SPACE])
+
+
+def test_copy_space_preserves_chunk_ids(manifest: Manifest) -> None:
+    """Ids are deliberately identical across spaces; that is what lets a
+    reprojection reuse them."""
+    source = _source()
+    chunks = [_chunk(source, "body")]
+    _register(manifest, source, chunks)
+    manifest.copy_space(SPACE, OTHER_SPACE)
+    assert manifest.chunk_ids_for(
+        source.root_label, source.rel_path, OTHER_SPACE
+    ) == manifest.chunk_ids_for(source.root_label, source.rel_path, SPACE)
+
+
+def test_copy_space_marks_the_target_complete(manifest: Manifest) -> None:
+    """Without the file_spaces rows the next run treats every file as needing
+    a backfill and re-embeds a collection that is already full."""
+    source = _source()
+    _register(manifest, source, [_chunk(source, "body")])
+    manifest.copy_space(SPACE, OTHER_SPACE)
+    decision = manifest.decide_from_stat(
+        _candidate(mtime_ns=source.mtime_ns, size=source.size),
+        space_slug=OTHER_SPACE,
+        chunker_version=VERSION,
+    )
+    assert decision is IndexDecision.SKIP_UNCHANGED
+
+
+def test_copy_space_is_idempotent(manifest: Manifest) -> None:
+    source = _source()
+    _register(manifest, source, [_chunk(source, "body")])
+    manifest.copy_space(SPACE, OTHER_SPACE)
+    assert manifest.copy_space(SPACE, OTHER_SPACE) == 1
+
+
+def test_copying_an_untracked_space_copies_nothing(manifest: Manifest) -> None:
+    """Reprojector warns on this: the source was never tracked, so the target
+    cannot be either, and the derived collection would be invisible to orphan
+    cleanup."""
+    assert manifest.copy_space("never-existed", OTHER_SPACE) == 0
