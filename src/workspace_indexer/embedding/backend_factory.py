@@ -37,7 +37,8 @@ def build_dense_backend(settings: Settings) -> EmbeddingBackend:
         name = model[len(_LOCAL_PREFIX) :]
         log.info("embed.backend", kind="fastembed", model=name)
         return FastembedDenseBackend(name, dimensions=settings.embedding_dimensions)
-    log.info("embed.backend", kind="pydantic-ai", model=model)
+    exported = settings.export_credentials()
+    log.info("embed.backend", kind="pydantic-ai", model=model, credentials=exported)
     return PydanticAiBackend(build_space(settings))
 
 

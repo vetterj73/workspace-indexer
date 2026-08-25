@@ -12,28 +12,14 @@ The asymmetry is what decides the default: going 2048 -> 1024 is free, going
 
 from __future__ import annotations
 
-import math
 from typing import Any, cast
 
 from workspace_indexer.models import EmbeddingSpace, SparseVec
 from workspace_indexer.obs.logging import get_logger
+from workspace_indexer.search.matryoshka import truncate
 from workspace_indexer.storage.qdrant_store import DENSE_VECTOR, SPARSE_VECTOR, QdrantStore
 
 log = get_logger("workspace_indexer.search.reproject")
-
-
-def truncate(vector: list[float], dimensions: int) -> list[float]:
-    """Take the leading entries and re-normalise.
-
-    Cosine distance ignores magnitude, so normalising is not strictly required
-    today — but it costs nothing and keeps the result correct if the collection
-    is ever switched to dot-product distance, where it very much is.
-    """
-    head = vector[:dimensions]
-    norm = math.sqrt(sum(value * value for value in head))
-    if norm == 0.0:
-        return head
-    return [value / norm for value in head]
 
 
 class Reprojector:

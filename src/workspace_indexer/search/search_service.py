@@ -15,6 +15,7 @@ from workspace_indexer.models import EmbeddingSpace, SearchHit
 from workspace_indexer.obs.logging import get_logger
 from workspace_indexer.rerank.noop_reranker import NoopReranker
 from workspace_indexer.rerank.reranker import Reranker
+from workspace_indexer.search.matryoshka import truncate
 from workspace_indexer.search.search_request import SearchRequest
 from workspace_indexer.search.staleness import mark_stale
 from workspace_indexer.storage.query_spec import QuerySpec
@@ -54,7 +55,7 @@ class SearchService:
         # Only pay for the branch the fusion mode will actually use.
         dense = None
         if fusion != "sparse_only":
-            dense = await self._embeddings.embed_query(request.query)
+            dense = self._fit(await self._embeddings.embed_query(request.query))
         sparse = None
         if fusion != "dense_only":
             sparse = self._sparse.encode_query(request.query)
@@ -86,6 +87,26 @@ class SearchService:
             duration_ms=round((time.monotonic() - started) * 1000, 1),
         )
         return ranked
+
+    def _fit(self, vector: list[float]) -> list[float]:
+        """Match the query vector to the collection being searched.
+
+        A reprojected collection is narrower than the embedder's native output,
+        so the query has to be truncated the same way its documents were.
+        Otherwise the vectors are not comparable at all and the store rejects
+        the query outright.
+        """
+        target = self._space.dimensions
+        if len(vector) == target:
+            return vector
+        if len(vector) < target:
+            # Truncation cannot invent information; this means the configured
+            # dimensions and the model disagree.
+            raise RuntimeError(
+                f"query embedding has {len(vector)} dimensions, "
+                f"collection {self._space.slug()} expects {target}"
+            )
+        return truncate(vector, target)
 
     def _reranker_for(self, request: SearchRequest) -> Reranker:
         """A per-call override swaps the object rather than setting a flag, so

@@ -240,3 +240,48 @@ async def test_empty_collection_returns_nothing(tmp_path: Path) -> None:
     await store.ensure_collection(SPACE)
     assert await _service(store).search(SearchRequest(query="anything")) == []
     await client.close()
+
+
+async def test_query_is_truncated_to_a_narrower_collection(store: QdrantStore) -> None:
+    """Searching a reprojected collection requires truncating the query the
+    same way its documents were. Comparing a 2048-d query against 1024-d
+    documents is not a degraded search, it is an error the store rejects."""
+    narrow = EmbeddingSpace(model="fake:model", dimensions=2)
+    body = "def a(): pass"
+    source = make_source(body, kind=FileKind.CODE, language="python", rel_path="src/a.py")
+    chunk = build_chunk(
+        source, "labbox", source_text=body, start_line=1, end_line=1,
+        chunker="code", version=1,
+    )
+    await store.upsert(
+        narrow, [chunk], [[1.0, 0.0]], FakeSparseBackend().encode_documents([body])
+    )
+    service = SearchService(
+        store=store,
+        # The embedder still produces its native 4 dimensions.
+        embeddings=EmbeddingService(FakeEmbeddingBackend(dimensions=4)),
+        sparse=FakeSparseBackend(),
+        reranker=NoopReranker(),
+        config=SearchSection(rerank=RerankConfig(enabled=False, model="fake:m")),
+        space=narrow,
+    )
+    hits = await service.search(SearchRequest(query="a", check_staleness=False))
+    assert hits
+
+
+async def test_query_wider_than_the_collection_is_the_only_direction_allowed(
+    store: QdrantStore,
+) -> None:
+    """A query narrower than the collection means the configured dimensions and
+    the model disagree; truncation cannot invent the missing entries."""
+    wide = EmbeddingSpace(model="fake:model", dimensions=64)
+    service = SearchService(
+        store=store,
+        embeddings=EmbeddingService(FakeEmbeddingBackend(dimensions=4)),
+        sparse=FakeSparseBackend(),
+        reranker=NoopReranker(),
+        config=SearchSection(rerank=RerankConfig(enabled=False, model="fake:m")),
+        space=wide,
+    )
+    with pytest.raises(RuntimeError, match="expects 64"):
+        await service.search(SearchRequest(query="a", fusion="dense_only"))

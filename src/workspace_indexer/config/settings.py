@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Literal
 
@@ -54,6 +55,36 @@ class Settings(BaseSettings):
     logfire_enabled: bool | None = None
     logfire_send_to_cloud: bool | None = None
     logfire_token: str | None = Field(default=None, repr=False)
+
+    def export_credentials(self) -> list[str]:
+        """Push API keys from .env into the process environment.
+
+        pydantic-settings loads .env into this object, but provider SDKs --
+        pydantic-ai's VoyageAI provider, and every other one -- read their
+        credentials from os.environ. Without this bridge the key is loaded and
+        then invisible to the thing that needs it, and the failure surfaces as
+        "set the VOYAGE_API_KEY environment variable" while it is sitting right
+        there in .env.
+
+        A real environment variable always wins: the shell is more specific
+        than a file, and overriding it would make `VOYAGE_API_KEY=x command`
+        silently do nothing.
+
+        Returns the names exported, for logging. Never the values.
+        """
+        exported: list[str] = []
+        for field in type(self).model_fields:
+            if not (field.endswith("_api_key") or field.endswith("_token")):
+                continue
+            value = getattr(self, field, None)
+            if not value:
+                continue
+            name = field.upper()
+            if os.environ.get(name):
+                continue
+            os.environ[name] = str(value)
+            exported.append(name)
+        return exported
 
     def config_hash(self) -> str:
         """Fingerprint of everything that affects index *content*.
