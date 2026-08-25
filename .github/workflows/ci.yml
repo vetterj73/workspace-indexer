@@ -13,7 +13,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  gates:
+  # The job name is what GitHub publishes as the status check, not the workflow
+  # name above. The MainProtection ruleset requires a check called "ci", so the
+  # job has to be called that -- naming it "gates" left the ruleset waiting for
+  # a check that would never appear, blocking every merge.
+  ci:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
