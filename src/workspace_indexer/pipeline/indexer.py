@@ -78,6 +78,7 @@ class Indexer:
             if not dry_run:
                 self._manifest.start_run(stats)
                 await self._store.ensure_collection(self._space)
+                await self._warn_if_store_diverges()
 
             await self._index(stats, only_root=only_root, force=force, dry_run=dry_run)
 
@@ -104,6 +105,28 @@ class Indexer:
                 seconds=round((stats.finished_at - stats.started_at).total_seconds(), 1),
             )
         return stats
+
+    async def _warn_if_store_diverges(self) -> None:
+        """Catch a manifest that describes a different store than the one we
+        are writing to.
+
+        The manifest records which space a file is complete for, not which
+        *store* holds it. Switching QDRANT_MODE from embedded to server, or
+        pointing at a different host, leaves it reporting a full index over an
+        empty one -- and the decision ladder then skips every file, so the run
+        silently does nothing.
+        """
+        recorded = self._manifest.chunk_count(self._space.slug())
+        stored = await self._store.count(self._space)
+        if recorded and stored < recorded * 0.9:
+            log.warning(
+                "run.store_diverges",
+                space=self._space.slug(),
+                manifest_chunks=recorded,
+                stored_chunks=stored,
+                detail="the manifest describes a store with more chunks than this one; "
+                "run with --force to rebuild, or the run will skip nearly everything",
+            )
 
     async def _index(
         self, stats: RunStats, *, only_root: str | None, force: bool, dry_run: bool

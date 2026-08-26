@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
+import structlog.testing
 from qdrant_client import AsyncQdrantClient
 
 from tests.conftest import ConfigFactory
@@ -145,6 +146,32 @@ async def test_deleting_a_file_removes_its_chunks(harness: Harness, workspace: P
     assert stats.chunks_deleted > 0
     assert await harness.store.count(SPACE) < before
     assert harness.manifest.get_file("workspace", "repo_one/src/widget.py") is None
+
+
+async def test_a_file_that_becomes_excluded_loses_its_chunks(
+    harness: Harness, workspace: Path
+) -> None:
+    """Exclusion has to be retroactive, not just prospective.
+
+    Adding an exclude pattern only stops *future* indexing; the chunks already
+    written stay searchable and keep answering queries. That is how an eval
+    artefact went on contaminating its own measurement after being excluded,
+    and how a file caught by the secret scanner would keep serving the copy
+    holding the secret. The file is still on disk, so nothing here depends on
+    deletion -- only on the file no longer being discovered.
+    """
+    await harness.indexer().run()
+    target = "repo_one/src/widget.py"
+    assert harness.manifest.get_file("workspace", target) is not None
+    before = await harness.store.count(SPACE)
+
+    harness.config.index.exclude.append("**/src/widget.py")
+    stats = await harness.indexer().run()
+
+    assert stats.chunks_deleted > 0
+    assert await harness.store.count(SPACE) < before
+    assert harness.manifest.get_file("workspace", target) is None
+    assert (workspace / "repo_one" / "src" / "widget.py").exists()
 
 
 async def test_renaming_a_file_moves_its_chunks(harness: Harness, workspace: Path) -> None:
@@ -348,3 +375,23 @@ async def test_a_withheld_file_does_not_abort_the_run(
     stats = await harness.indexer().run()
     assert stats.errors == 0
     assert stats.chunks_upserted > 0
+
+
+async def test_a_manifest_describing_a_different_store_is_flagged(
+    harness: Harness,
+) -> None:
+    """Switching QDRANT_MODE, or pointing at another host, leaves the manifest
+    reporting a full index over an empty store. The decision ladder then skips
+    every file and the run silently does nothing -- which is exactly what
+    happened moving from embedded to server."""
+    await harness.indexer().run()
+    assert harness.manifest.chunk_count(SPACE.slug()) > 0
+
+    # The store loses its contents while the manifest keeps its record.
+    await harness.store.drop_collection(SPACE)
+
+    # structlog's own capture, rather than caplog: the harness does not
+    # configure the stdlib routing that caplog depends on.
+    with structlog.testing.capture_logs() as logs:
+        await harness.indexer().run()
+    assert any(entry.get("event") == "run.store_diverges" for entry in logs)

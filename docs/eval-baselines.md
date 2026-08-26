@@ -13,6 +13,7 @@ per-case detail lives in `evals/*.json`.
 
 | recorded | embedding | dims | fusion | reranker | recall@k | MRR@k | misses |
 |---|---|---|---|---|---|---|---|
+| 2026-08-26T04:48:23 | `voyageai:voyage-code-4` | 1024 | rrf | `voyageai:rerank-2.5-lite` | 0.875 | 0.750 | 3/16 |
 | 2026-08-26T04:11:55 | `voyageai:voyage-code-4` | 1024 | rrf | `voyageai:rerank-2.5-lite` | 0.875 | 0.745 | 3/16 |
 
 ## Ad hoc analysis
