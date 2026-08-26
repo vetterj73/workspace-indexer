@@ -116,6 +116,18 @@ LOCKFILE_NAMES = frozenset(
 
 # Extensionless files that do have a tree-sitter grammar; detect_language_from_path
 # keys off the extension, so these need naming explicitly.
+# Extensions tree-sitter's own detection does not map. Web Forms predate the
+# grammars and nothing ships an .aspx parser, but the markup is close enough to
+# Razor that the razor grammar reads it -- and either way the error-node
+# fallback catches it, which is better than TEXT with no language recorded at
+# all.
+EXTENSION_LANGUAGES: dict[str, str] = {
+    ".aspx": "razor",
+    ".ascx": "razor",
+    ".master": "razor",
+}
+
+
 FILENAME_LANGUAGES: dict[str, str] = {
     "Makefile": "make",
     "makefile": "make",
@@ -155,6 +167,10 @@ def classify(path: Path) -> tuple[FileKind, str | None]:
         return FileKind.OPAQUE, None
     if ext in DATA_EXTS or ext in TEXT_EXTS:
         return FileKind.TEXT, detect_language_from_path(str(path))
+
+    mapped = EXTENSION_LANGUAGES.get(ext)
+    if mapped:
+        return FileKind.CODE, mapped
 
     language = detect_language_from_path(str(path))
     if language in {"markdown", "markdown_inline"}:

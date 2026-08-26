@@ -8,12 +8,16 @@ missing grammar are exercised with a monkeypatched parser so they need nothing.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
+import structlog.testing
 
 from tests.conftest import make_source
-from workspace_indexer.chunking.code_chunker import CodeChunker
+from workspace_indexer.chunking.code_chunker import CodeChunker, parse_is_unreliable
 from workspace_indexer.chunking.text_chunker import TextChunker
 from workspace_indexer.config import ChunkingSection, CodeChunking
+from workspace_indexer.discovery.classify import classify
 from workspace_indexer.models import Chunk, FileKind
 
 SAMPLE = '''"""Module docstring."""
@@ -311,3 +315,50 @@ def test_a_config_object_does_not_name_a_chunk() -> None:
     code = "const config = {\n  retries: 3,\n  timeout: 1000,\n};\n"
     chunks = _chunk(code, "typescript")
     assert not any(c.meta.symbol_path == "config" for c in chunks)
+
+
+def test_the_parse_reliability_rule() -> None:
+    """The decision, tested directly.
+
+    Reproducing a grammar's failure synthetically chases the grammar rather
+    than our rule, and the files that actually trigger this are a client's --
+    not committable to a public repository. The evidence for the threshold is a
+    measurement over a real ASP.NET repo: razor 75%, scss 82% and sql 98% of
+    chunks carry error nodes, against powershell at 17% and everything else at
+    0%. Half separates "not really parsing" from "one construct tripped it".
+    """
+    assert parse_is_unreliable(5, 10) is True
+    assert parse_is_unreliable(10, 10) is True
+    assert parse_is_unreliable(4, 10) is False
+    # The single-chunk case, which is the common shape: a badly parsed file
+    # comes back as one fragment rather than many.
+    assert parse_is_unreliable(1, 1) is True
+    assert parse_is_unreliable(0, 1) is False
+    # No chunks is not a parse failure; it is handled separately.
+    assert parse_is_unreliable(0, 0) is False
+
+
+def test_a_clean_parse_is_not_demoted() -> None:
+    """One tripped construct must not cost a whole file its symbols."""
+    with structlog.testing.capture_logs() as logs:
+        chunks = _chunk(SAMPLE, "python", max_tokens=60, min_tokens=1)
+
+    assert not [e for e in logs if e["event"] == "chunk.error_nodes"]
+    assert any(c.meta.symbol_path for c in chunks)
+
+
+def test_a_degraded_file_is_still_fully_indexed() -> None:
+    """The point is better chunks, never fewer files."""
+    razor = "@page\n" + "\n".join(f"<div class='r{i}'>row {i}</div>" for i in range(200))
+    chunks = _chunk(razor, "razor")
+    assert chunks
+    assert "row 199" in "".join(c.source_text for c in chunks)
+
+
+def test_web_forms_extensions_are_recognised() -> None:
+    """`.aspx` fell through to the text chunker with no language recorded, so
+    nothing downstream could tell it was markup at all."""
+    for name in ("Default.aspx", "Controls.ascx", "Site.master"):
+        kind, language = classify(Path("/x") / name)
+        assert kind is FileKind.CODE
+        assert language == "razor"

@@ -28,12 +28,36 @@ from workspace_indexer.obs.logging import get_logger
 
 log = get_logger("workspace_indexer.chunking.code")
 
+# Above this share of chunks carrying parse errors, stop trusting the parse.
+#
+# Chosen from a real ASP.NET repo, where the split is wide enough that the exact
+# value hardly matters: razor 75%, scss 82% and sql 98% of chunks carry error
+# nodes, while powershell sits at 17% and every other language at 0%. Half
+# separates "this grammar is not really parsing this file" from "one construct
+# tripped it".
+ERROR_NODE_LIMIT = 0.5
+
+
+def parse_is_unreliable(degraded: int, total: int) -> bool:
+    """Whether enough of a file's chunks carry parse errors to stop trusting it.
+
+    A separate function because it is the decision, and the decision is what is
+    worth testing. Reproducing a grammar's failure in a synthetic fixture is
+    chasing the grammar rather than our own rule -- and the files that actually
+    trigger this are a client's, which cannot be committed to a public
+    repository.
+    """
+    if total <= 0:
+        return False
+    return degraded / total >= ERROR_NODE_LIMIT
+
 
 class CodeChunker:
     name = "code"
     # 2: arrow-function and class-property declarations are attributed, which
-    # changes symbol_path on JS/TS chunks and so must force a re-chunk.
-    version = 2
+    #    changes symbol_path on JS/TS chunks and so must force a re-chunk.
+    # 3: files whose parse is mostly error nodes fall back to text chunking.
+    version = 3
     kinds = frozenset({FileKind.CODE})
 
     def __init__(self, workspace: str, fallback: TextChunker) -> None:
@@ -97,6 +121,28 @@ class CodeChunker:
             and c.content.strip()
             and estimate_tokens(c.content, file.kind) >= settings.min_tokens
         ]
+
+        degraded = sum(1 for c in kept if c.metadata.has_error_nodes)
+        if parse_is_unreliable(degraded, len(kept)):
+            # The grammar parsed without raising and then produced fragments.
+            # Razor, SCSS and SQL all do this: `process()` returns chunks that
+            # begin inside an HTML attribute or halfway through a statement,
+            # carry no symbol, and are worse than useless -- they dilute the
+            # index with text nothing can match meaningfully.
+            #
+            # Paragraph packing is not clever, but it splits on blank lines
+            # rather than mid-token, which is strictly better than a confident
+            # parse that is wrong.
+            log.info(
+                "chunk.error_nodes",
+                language=file.language,
+                degraded_chunks=degraded,
+                total_chunks=len(kept),
+                detail="most of this file's chunks contain parse errors; "
+                "falling back to text chunking",
+            )
+            yield from self._degrade(file, config, reason="error_nodes")
+            return
 
         # A definition too large for one chunk is reported with its name on the
         # first chunk only; the continuations carry just the enclosing class in
