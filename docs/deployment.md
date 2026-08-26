@@ -245,8 +245,59 @@ and every call fails. If you add logging, keep it off stdout.
 
 ## 5. Keeping the index current
 
-The indexer is a batch command, not a daemon (a watcher is issue #10). Until
-then, a timer.
+Two options, and the watcher is the better one where it works.
+
+### `watch` — event-driven
+
+```bash
+workspace-indexer watch
+```
+
+Watches every configured root and reindexes the root a change lands in. A
+trigger, not a second indexing path: each change ends up in the same
+`index --root <label>` run the CLI performs, so it cannot develop its own
+opinion about what counts as changed.
+
+It prints the mode it chose per root before it starts:
+
+```
+  src: native
+Watching. Ctrl-C to stop.
+```
+
+**`native` versus `poll` is not a preference.** On WSL and similar, an inotify
+watch on a path under `/mnt/c` *succeeds* and then never delivers an event —
+the 9P protocol WSL uses to reach Windows files carries no change
+notification, and inotify is a service of the kernel's own filesystem layer.
+The same is true of NFS, CIFS and most FUSE mounts. Nothing errors; the watcher
+just sits there looking healthy and indexing nothing.
+
+So each root is checked against `/proc/mounts` and polled when its filesystem
+cannot deliver events. Unknown filesystems are polled too: guessing "native"
+wrong costs a watcher that silently never fires, and guessing "poll" wrong only
+costs some CPU. Override with `watch.mode: native|poll` when you know better.
+
+**Watch out for the watch limit.** `/proc/sys/fs/inotify/max_user_watches` caps
+watches per *user* — often 65536, sometimes 8192 — and it is shared with every
+editor and language server already running. A workspace containing
+`node_modules` will exhaust it, and the failure reads
+`OSError: [Errno 28] No space left on device`, which has nothing to do with
+disk space. The watcher counts directories up front and logs the headroom;
+`node_modules`, `.venv`, `target` and friends are skipped for watching whatever
+your index excludes say.
+
+This is the other reason the ignore rules matter. They are not only about index
+quality — they are what keeps the watcher functional.
+
+Editing `workspace.yaml` reloads it live. Settings and ignore rules take effect
+immediately; **a newly added root still needs `watch` restarted**, because the
+underlying watch cannot be handed a new path mid-flight. The watcher says so
+when it reloads rather than leaving you to find out.
+
+### A timer — for a machine nobody is logged into
+
+`watch` is a foreground process. Where you want unattended reindexing, or where
+every root is polled anyway, a timer is simpler and survives reboots.
 
 `~/.config/systemd/user/workspace-indexer.service`:
 

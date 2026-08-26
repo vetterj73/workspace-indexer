@@ -45,6 +45,7 @@ workspace-indexer status              # what is indexed, in which spaces, what r
 workspace-indexer explain path/to/file.py   # the chunks one file produces
 workspace-indexer reproject -d 1024   # narrower collection, no re-embedding
 workspace-indexer eval                # recall@k and MRR@k against config/eval.yaml
+workspace-indexer watch               # reindex as files change
 workspace-indexer serve               # MCP server over stdio, for an agent
 ```
 

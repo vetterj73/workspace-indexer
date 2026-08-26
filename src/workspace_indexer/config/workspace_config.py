@@ -14,6 +14,7 @@ from workspace_indexer.config.logging_config import LoggingConfig
 from workspace_indexer.config.root_config import RootConfig
 from workspace_indexer.config.search_section import SearchSection
 from workspace_indexer.config.strict import Strict
+from workspace_indexer.config.watch_section import WatchSection
 from workspace_indexer.config.workspace_section import WorkspaceSection
 
 
@@ -22,6 +23,7 @@ class WorkspaceConfig(Strict):
     index: IndexSection = Field(default_factory=IndexSection)
     chunking: ChunkingSection = Field(default_factory=ChunkingSection)
     search: SearchSection = Field(default_factory=SearchSection)
+    watch: WatchSection = Field(default_factory=WatchSection)
     eval: EvalSection = Field(default_factory=EvalSection)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
 
