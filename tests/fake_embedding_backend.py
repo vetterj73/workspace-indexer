@@ -20,6 +20,7 @@ class FakeEmbeddingBackend:
         fail_times: int = 0,
         error: Exception | None = None,
         cost_per_call: float | None = 0.001,
+        tokens_per_call: int | None = None,
         returned_dimensions: int | None = None,
         drop_last: bool = False,
     ) -> None:
@@ -28,6 +29,9 @@ class FakeEmbeddingBackend:
         self._fail_times = fail_times
         self._error = error or RuntimeError("boom")
         self._cost = cost_per_call
+        # None models a provider that reports no usage, so the caller has
+        # to fall back to its own estimate.
+        self._tokens = tokens_per_call
         # Simulate a provider whose vector width disagrees with our config.
         self._returned_dimensions = returned_dimensions or dimensions
         # Simulate a provider returning fewer vectors than inputs.
@@ -75,6 +79,9 @@ class FakeEmbeddingBackend:
 
     def last_cost_usd(self) -> float | None:
         return self._cost
+
+    def last_tokens(self) -> int | None:
+        return self._tokens
 
     def _vector(self, text: str) -> list[float]:
         # Deterministic and text-dependent, so a misordered result is visible.

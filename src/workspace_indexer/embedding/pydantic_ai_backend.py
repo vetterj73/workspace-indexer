@@ -38,6 +38,7 @@ class PydanticAiBackend:
         )
         self._embedder = embedder or Embedder(space.model)
         self._last_cost: float | None = None
+        self._last_tokens: int | None = None
 
     async def max_input_tokens(self) -> int | None:
         return await self._embedder.max_input_tokens()
@@ -64,8 +65,12 @@ class PydanticAiBackend:
     def last_cost_usd(self) -> float | None:
         return self._last_cost
 
+    def last_tokens(self) -> int | None:
+        return self._last_tokens
+
     def _record_cost(self, result: object) -> None:
         self._last_cost = None
+        self._last_tokens = _reported_tokens(result)
         cost_fn = getattr(result, "cost", None)
         if not callable(cost_fn):
             return
@@ -78,3 +83,17 @@ class PydanticAiBackend:
         total = getattr(calculation, "total_price", None)
         if total is not None:
             self._last_cost = float(total)
+
+
+def _reported_tokens(result: object) -> int | None:
+    """The provider's own input-token count for one request.
+
+    Read defensively: it arrives through pydantic-ai's `usage` object, which
+    not every provider populates, and a missing count is a reason to fall back
+    to our estimate rather than to fail a request that already succeeded.
+    """
+    usage = getattr(result, "usage", None)
+    tokens = getattr(usage, "input_tokens", None)
+    if isinstance(tokens, int) and tokens > 0:
+        return tokens
+    return None

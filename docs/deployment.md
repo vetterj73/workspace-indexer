@@ -385,10 +385,25 @@ The gap between rows 1 and 3 is the entire argument for the manifest, and the
 gap between rows 1 and 2 is the argument for an API over local inference on a
 box without a GPU.
 
-Token cost is not currently reported correctly — `est_cost_usd` in the `runs`
-table reads `0.0` because the provider is unpriced in pydantic-ai's table
-(issue #13). Price the 3.19M figure against your provider's current rate rather
-than trusting that column.
+Cost reporting tells three answers apart, because they are three different
+answers:
+
+| Display | Meaning |
+|---|---|
+| `$0.1234` | The provider reported this price |
+| `~$0.1234` | Estimated from `EMBEDDING_PRICE_PER_MTOK`, because the provider did not |
+| `unpriced (7)` | Neither the provider nor config could price 7 requests |
+
+`genai-prices`, which pydantic-ai delegates to, has no entry for
+`voyage-code-4`, so set `EMBEDDING_PRICE_PER_MTOK=0.12` (its rate at the time
+of writing) to get a real estimate. Without it, runs are recorded as *unknown*
+rather than as free — `$0.0000` for an unpriced API is the wrong answer in the
+expensive direction.
+
+`status` also reports cumulative tokens against `EMBEDDING_FREE_TIER_TOKENS`.
+Read it as a floor, not a measurement: it counts what this manifest embedded,
+while the allowance belongs to the account and is drawn down by everything
+using the key.
 
 **Recovering by hand:**
 

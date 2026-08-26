@@ -86,8 +86,14 @@ class Indexer:
             if not dry_run:
                 # A dry run has already accumulated its own estimate; the
                 # embedding service's counter is zero because it never ran.
-                stats.tokens_embedded = self._embeddings.stats.tokens
-                stats.est_cost_usd = self._embeddings.stats.est_cost_usd
+                embed = self._embeddings.stats
+                stats.tokens_embedded = embed.tokens
+                stats.est_cost_usd = embed.est_cost_usd
+                # Carried, not dropped. EmbeddingStats has always drawn the
+                # distinction; RunStats used to discard it here, which is how
+                # "unpriced" became indistinguishable from "free".
+                stats.unpriced_requests = embed.unpriced_requests
+                stats.cost_is_estimate = embed.cost_is_estimate
             if not dry_run:
                 self._manifest.finish_run(stats)
 
@@ -101,6 +107,8 @@ class Indexer:
                 chunks_deleted=stats.chunks_deleted,
                 tokens=stats.tokens_embedded,
                 est_cost_usd=round(stats.est_cost_usd, 4),
+                cost_is_estimate=stats.cost_is_estimate,
+                unpriced_requests=stats.unpriced_requests,
                 errors=stats.errors,
                 seconds=round((stats.finished_at - stats.started_at).total_seconds(), 1),
             )

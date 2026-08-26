@@ -80,6 +80,8 @@ CREATE TABLE IF NOT EXISTS runs (
     chunks_deleted  INTEGER NOT NULL DEFAULT 0,
     tokens_embedded INTEGER NOT NULL DEFAULT 0,
     est_cost_usd    REAL    NOT NULL DEFAULT 0.0,
+    unpriced_requests INTEGER NOT NULL DEFAULT 0,
+    cost_is_estimate  INTEGER NOT NULL DEFAULT 0,
     errors          INTEGER NOT NULL DEFAULT 0,
     config_hash     TEXT
 );

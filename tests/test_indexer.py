@@ -21,7 +21,7 @@ from workspace_indexer.chunking import ChunkerRegistry
 from workspace_indexer.classification import RuleClassifier
 from workspace_indexer.config import Settings, WorkspaceConfig
 from workspace_indexer.embedding.embedding_service import EmbeddingService
-from workspace_indexer.models import EmbeddingSpace
+from workspace_indexer.models import EmbeddingSpace, SearchFilters
 from workspace_indexer.pipeline import Indexer
 from workspace_indexer.state import Manifest
 from workspace_indexer.storage.qdrant_store import QdrantStore
@@ -386,3 +386,162 @@ async def test_a_manifest_describing_a_different_store_is_flagged(
     with structlog.testing.capture_logs() as logs:
         await harness.indexer().run()
     assert any(entry.get("event") == "run.store_diverges" for entry in logs)
+
+
+@pytest.fixture
+def two_roots(tmp_path: Path) -> tuple[Path, Path, WorkspaceConfig]:
+    """The shape a real workspace takes: docs in one tree, code in another.
+
+    `c:\\doc\\ProjectA` and `c:\\src\\ProjectA` are two separate roots of one
+    workspace, not two workspaces -- they share a collection, and `root_label`
+    is what keeps them apart inside it.
+    """
+    docs = tmp_path / "doc" / "ProjectA"
+    code = tmp_path / "src" / "ProjectA"
+    (docs / "guide").mkdir(parents=True)
+    (code / "app").mkdir(parents=True)
+    (docs / "guide" / "install.md").write_text("# Install\n\nRun the thing.\n", encoding="utf-8")
+    (docs / "guide" / "api.md").write_text("# API\n\nEndpoints and payloads.\n", encoding="utf-8")
+    (code / "app" / "main.py").write_text("def main():\n    return 1\n", encoding="utf-8")
+    (code / "app" / "util.py").write_text("def helper():\n    return 2\n", encoding="utf-8")
+
+    config = WorkspaceConfig.model_validate(
+        {
+            "workspace": {
+                "name": "ProjectA",
+                "roots": [
+                    {"path": str(docs), "label": "docs"},
+                    {"path": str(code), "label": "code"},
+                ],
+            }
+        }
+    )
+    return docs, code, config
+
+
+async def _chunks_in(store: QdrantStore, root: str) -> int:
+    """Chunks still in the store for one root -- the observable that matters.
+
+    A manifest row with no chunk behind it is not a surviving index.
+    """
+    return await store.count(SPACE, SearchFilters(root_label=root))
+
+
+async def test_separate_roots_share_one_collection(
+    two_roots: tuple[Path, Path, WorkspaceConfig], tmp_path: Path
+) -> None:
+    """Two directory trees, one collection.
+
+    The collection name comes from `workspace.name` and the embedding space --
+    never from a root -- so pointing several roots at one workspace is how you
+    get one searchable index over docs and code together.
+    """
+    _, _, config = two_roots
+    client = AsyncQdrantClient(path=str(tmp_path / "qdrant"))
+    store = QdrantStore(client, workspace=config.workspace.name, payload_indexes=False)
+    assert store.collection_name(SPACE) == f"ProjectA__{SPACE.slug()}"
+
+    with Manifest(tmp_path / "manifest.sqlite3") as manifest:
+        harness = Harness(config, store, manifest, tmp_path)
+        await harness.indexer().run()
+
+        assert manifest.file_count("docs") == 2
+        assert manifest.file_count("code") == 2
+        # Both roots, one collection: the totals add up inside it.
+        assert await _chunks_in(store, "docs") > 0
+        assert await _chunks_in(store, "code") > 0
+        assert await store.count(SPACE) == await _chunks_in(store, "docs") + await _chunks_in(
+            store, "code"
+        )
+    await client.close()
+
+
+async def test_reindexing_one_root_leaves_the_other_untouched(
+    two_roots: tuple[Path, Path, WorkspaceConfig], tmp_path: Path
+) -> None:
+    """The question anyone with a split workspace asks first.
+
+    Indexing `docs` must not notice that `code` was not walked and conclude its
+    files have been deleted. Orphan removal is scoped to the root that was
+    actually walked; without that scoping, every `--root` run would wipe every
+    other root's chunks -- silent, total, and only visible as an empty search.
+    """
+    docs, _, config = two_roots
+    client = AsyncQdrantClient(path=str(tmp_path / "qdrant"))
+    store = QdrantStore(client, workspace=config.workspace.name, payload_indexes=False)
+
+    with Manifest(tmp_path / "manifest.sqlite3") as manifest:
+        harness = Harness(config, store, manifest, tmp_path)
+        await harness.indexer().run()
+
+        code_before = await _chunks_in(store, "code")
+        assert code_before
+
+        # Change one docs file, then reindex docs alone.
+        (docs / "guide" / "install.md").write_text(
+            "# Install\n\nCompletely rewritten instructions.\n", encoding="utf-8"
+        )
+        stats = await harness.indexer().run(only_root="docs")
+
+        assert stats.files_changed == 1
+        # The whole point: a root that was never walked is untouched.
+        assert await _chunks_in(store, "code") == code_before
+        assert manifest.file_count("code") == 2
+    await client.close()
+
+
+async def test_deleting_a_file_under_one_root_only_prunes_that_root(
+    two_roots: tuple[Path, Path, WorkspaceConfig], tmp_path: Path
+) -> None:
+    """Orphan pruning must still work *within* the walked root -- scoping it
+    must not turn it off."""
+    docs, _, config = two_roots
+    client = AsyncQdrantClient(path=str(tmp_path / "qdrant"))
+    store = QdrantStore(client, workspace=config.workspace.name, payload_indexes=False)
+
+    with Manifest(tmp_path / "manifest.sqlite3") as manifest:
+        harness = Harness(config, store, manifest, tmp_path)
+        await harness.indexer().run()
+        code_before = await _chunks_in(store, "code")
+
+        (docs / "guide" / "api.md").unlink()
+        stats = await harness.indexer().run(only_root="docs")
+
+        assert stats.chunks_deleted > 0
+        assert manifest.get_file("docs", "guide/api.md") is None
+        assert manifest.get_file("docs", "guide/install.md") is not None
+        assert await _chunks_in(store, "code") == code_before
+    await client.close()
+
+
+async def test_removing_a_root_from_config_drops_its_chunks(
+    two_roots: tuple[Path, Path, WorkspaceConfig], tmp_path: Path
+) -> None:
+    """The trap next door to `--root`, and it cuts the other way.
+
+    `--root docs` is a *scope*: other roots are not walked and not touched.
+    Deleting a root from workspace.yaml is a *decision*: it is walked as part
+    of "everything", found absent, and pruned. Both are right, and they look
+    almost identical from the command line, so the difference is worth a test
+    rather than a paragraph nobody reads.
+    """
+    _, _, config = two_roots
+    client = AsyncQdrantClient(path=str(tmp_path / "qdrant"))
+    store = QdrantStore(client, workspace=config.workspace.name, payload_indexes=False)
+
+    with Manifest(tmp_path / "manifest.sqlite3") as manifest:
+        harness = Harness(config, store, manifest, tmp_path)
+        await harness.indexer().run()
+        assert await _chunks_in(store, "code") > 0
+
+        # The user edits workspace.yaml and removes the code root.
+        harness.config.workspace.roots = [
+            r for r in config.workspace.roots if r.resolved_label != "code"
+        ]
+        await harness.indexer().run()
+
+        assert await _chunks_in(store, "code") == 0
+        assert manifest.file_count("code") == 0
+        # docs is untouched -- this is pruning, not a rebuild.
+        assert await _chunks_in(store, "docs") > 0
+    await client.close()

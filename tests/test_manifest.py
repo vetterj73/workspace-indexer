@@ -7,6 +7,7 @@ rungs must not be reached when a cheaper one would answer.
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -692,3 +693,97 @@ def test_migration_is_idempotent(tmp_path: Path) -> None:
     for _ in range(3):
         with Manifest(path) as m:
             m.file_count()
+
+
+def test_price_fields_survive_the_round_trip_to_the_runs_table(tmp_path: Path) -> None:
+    """`unpriced_requests` used to die between EmbeddingStats and the database.
+
+    The runs table exists so "why did this cost $40" is answerable. It cannot
+    answer that if the only thing it stores is a number that reads as zero
+    whether the run was free or unmeasured.
+    """
+    with Manifest(tmp_path / "m.sqlite3") as manifest:
+        stats = RunStats(
+            run_id="r1",
+            started_at=datetime.now(UTC),
+            tokens_embedded=3_190_000,
+            est_cost_usd=0.0,
+            unpriced_requests=7,
+        )
+        manifest.start_run(stats)
+        stats.finished_at = datetime.now(UTC)
+        manifest.finish_run(stats)
+
+        row = manifest.recent_runs()[0]
+        assert row.unpriced_requests == 7
+        assert row.cost_is_estimate is False
+        assert row.cost_display == "unpriced (7)"
+
+
+def test_an_estimated_cost_is_marked_as_one(tmp_path: Path) -> None:
+    with Manifest(tmp_path / "m.sqlite3") as manifest:
+        stats = RunStats(
+            run_id="r2",
+            started_at=datetime.now(UTC),
+            est_cost_usd=0.3828,
+            cost_is_estimate=True,
+        )
+        manifest.start_run(stats)
+        stats.finished_at = datetime.now(UTC)
+        manifest.finish_run(stats)
+
+        row = manifest.recent_runs()[0]
+        assert row.cost_is_estimate is True
+        assert row.cost_display == "~$0.3828"
+
+
+def test_a_genuinely_free_run_still_shows_a_cost(tmp_path: Path) -> None:
+    """A local model costs nothing, and $0.0000 is the right answer for it."""
+    with Manifest(tmp_path / "m.sqlite3") as manifest:
+        stats = RunStats(run_id="r3", started_at=datetime.now(UTC))
+        manifest.start_run(stats)
+        stats.finished_at = datetime.now(UTC)
+        manifest.finish_run(stats)
+
+        assert manifest.recent_runs()[0].cost_display == "$0.0000"
+
+
+def test_total_tokens_sums_every_run(tmp_path: Path) -> None:
+    with Manifest(tmp_path / "m.sqlite3") as manifest:
+        assert manifest.total_tokens_embedded() == 0
+        for index, tokens in enumerate([3_190_000, 1_600]):
+            stats = RunStats(
+                run_id=f"run{index}",
+                started_at=datetime.now(UTC),
+                tokens_embedded=tokens,
+            )
+            manifest.start_run(stats)
+            stats.finished_at = datetime.now(UTC)
+            manifest.finish_run(stats)
+
+        assert manifest.total_tokens_embedded() == 3_191_600
+
+
+def test_a_database_predating_the_price_columns_is_migrated(tmp_path: Path) -> None:
+    """A full index costs real time and money, so a schema change must not mean
+    "rebuild". The old rows read back as priced-at-zero, which is optimistic
+    for the API runs that predate the fix and correct for local ones -- either
+    way it is a readable row rather than a query error.
+    """
+    path = tmp_path / "old.sqlite3"
+    with Manifest(path) as manifest:
+        stats = RunStats(run_id="old", started_at=datetime.now(UTC), tokens_embedded=99)
+        manifest.start_run(stats)
+        stats.finished_at = datetime.now(UTC)
+        manifest.finish_run(stats)
+
+    # Drop the columns the way an older version would never have had them.
+    with sqlite3.connect(path) as db:
+        db.execute("ALTER TABLE runs DROP COLUMN unpriced_requests")
+        db.execute("ALTER TABLE runs DROP COLUMN cost_is_estimate")
+
+    with Manifest(path) as reopened:
+        row = reopened.recent_runs()[0]
+        assert row.run_id == "old"
+        assert row.unpriced_requests == 0
+        assert row.tokens_embedded == 99
