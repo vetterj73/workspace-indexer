@@ -23,6 +23,10 @@ class SearchFilters(BaseModel):
     # What role the document plays. This is what separates a specification
     # from a changelog sitting in the same directory.
     doc_type: DocumentType | None = None
+    # Any-of, for a tool that wants a family rather than one category:
+    # find_guidance is normative *and* design, and running two searches to
+    # union them would break ranking across the two halves.
+    doc_types: list[DocumentType] = []
     # Exclusions, so search_code can drop tests and generated output
     # without the caller naming everything it does want.
     exclude_doc_types: list[DocumentType] = []
@@ -34,6 +38,4 @@ class SearchFilters(BaseModel):
         and constrains nothing, but it is not None, so exclude_none alone gets
         this wrong.
         """
-        return not any(
-            value for value in self.model_dump(exclude_none=True).values()
-        )
+        return not any(value for value in self.model_dump(exclude_none=True).values())

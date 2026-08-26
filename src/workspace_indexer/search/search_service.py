@@ -88,6 +88,16 @@ class SearchService:
         )
         return ranked
 
+    async def chunks_for_path(self, rel_path: str, limit: int = 50) -> list[SearchHit]:
+        """Every indexed chunk of one file, staleness flagged.
+
+        Not a query: an agent holding one hit and wanting the code around it
+        should not have to invent a search that happens to retrieve the
+        neighbours. `chunk_index`/`chunk_total` went into the payload for this.
+        """
+        hits = await self._store.chunks_for_path(self._space, rel_path, limit=limit)
+        return mark_stale(hits)
+
     def _fit(self, vector: list[float]) -> list[float]:
         """Match the query vector to the collection being searched.
 

@@ -81,8 +81,9 @@ def test_payload_carries_provenance() -> None:
 
 def test_non_repo_files_record_that_fact_rather_than_omitting_it() -> None:
     file = make_source("body", kind=FileKind.TEXT, language=None, repo=None)
-    chunk = build_chunk(file, "labbox", source_text="body", start_line=1, end_line=1,
-                        chunker="text", version=1)
+    chunk = build_chunk(
+        file, "labbox", source_text="body", start_line=1, end_line=1, chunker="text", version=1
+    )
     payload = to_payload(chunk, SPACE)
     assert payload["is_repo"] is False
     assert payload["repo_name"] is None
@@ -142,9 +143,14 @@ def test_indexed_at_is_iso_utc() -> None:
 def test_every_filterable_field_has_an_index() -> None:
     """A filter on an unindexed field makes Qdrant scan, which looks like a
     vector performance problem but is not."""
-    # path_prefix is served by `ancestors`; exclude_doc_types is an
-    # exclusion expressed against doc_type rather than a field of its own.
-    filterable = set(SearchFilters.model_fields) - {"path_prefix", "exclude_doc_types"}
+    # Three filters are expressed against a field other than their own name:
+    # path_prefix is served by `ancestors`, and doc_types/exclude_doc_types are
+    # an any-of and a none-of over `doc_type`.
+    filterable = set(SearchFilters.model_fields) - {
+        "path_prefix",
+        "doc_types",
+        "exclude_doc_types",
+    }
     payload_keys = set(to_payload(_chunk(), SPACE))
     for field in filterable:
         assert field in payload_keys, field

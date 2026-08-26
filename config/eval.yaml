@@ -60,48 +60,56 @@
 # GUIDANCE — the iteration-2 case: no code to imitate, lead me with the rules
 # ---------------------------------------------------------------------------
 
-- query: how should I write Python for this project, what are the standards
+- group: guidance
+  query: how should I write Python for this project, what are the standards
   expect: [PythonEngineeringStandards.md]
   note: >
     guidance · a genuine normative standards document. Competing against every
     README and tutorial in the workspace.
 
-- query: what conventions must I follow when structuring a new module
+- group: guidance
+  query: what conventions must I follow when structuring a new module
   expect: [workspace-indexer/CLAUDE.md]
   note: >
     guidance · the one-class-per-file, testing and typing mandates. A search for
     "structure" pulls architecture prose; the mandates are what actually bind.
 
-- query: I need to add support for a new agent provider, how should it be designed
+- group: guidance
+  query: I need to add support for a new agent provider, how should it be designed
   expect: [specs/pi-agent-support/design.md]
   note: >
     guidance · THE motivating case. design.md, requirements.md, plan.md,
     summary.md and CHANGELOG.md all sit in this directory describing the same
     feature. Only the design document answers "how should I build it".
 
-- query: what are the requirements for running agents concurrently in waves
+- group: guidance
+  query: what are the requirements for running agents concurrently in waves
   expect: [specs/agent-waves/requirements.md]
   note: >
     guidance · requirements vs design vs summary, same directory, same subject.
     A hard discrimination for similarity alone.
 
-- query: how should reusable hat definitions be imported from local files
+- group: guidance
+  query: how should reusable hat definitions be imported from local files
   expect: [specs/hat-imports/design.md]
   note: guidance · design document, competing with its own rough-idea and requirements
 
-- query: how do I set up a development environment and submit a change
+- group: guidance
+  query: how do I set up a development environment and submit a change
   expect: [CONTRIBUTING.md]
   note: >
     guidance · deliberately a `guide`, not `normative`. If a type filter is ever
     applied by default, this case is the one that catches it over-filtering.
 
-- query: what is the plan for adding lifecycle hooks to the orchestrator
+- group: guidance
+  query: what is the plan for adding lifecycle hooks to the orchestrator
   expect: [specs/add-hooks-to-ralph-orchestrator-lifecycle/plan.md]
   note: >
     guidance · plan vs design vs CHANGELOG in one directory. "Plan" is the
     discriminating word and the sparse branch should help.
 
-- query: how should this project handle logging and observability
+- group: guidance
+  query: how should this project handle logging and observability
   expect: [docs/iteration-1-plan.md, workspace-indexer/CLAUDE.md]
   note: >
     guidance · our own design record. Competes with obs/logging.py itself, which

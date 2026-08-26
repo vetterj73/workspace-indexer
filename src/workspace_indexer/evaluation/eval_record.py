@@ -31,6 +31,14 @@ class EvalRecord(BaseModel):
     fusion: str
     reranker: str
     limit: int
+    # Which retrieval surface produced these numbers: the raw search path, or
+    # one of the MCP tools with its own document-type policy. A tool's filter
+    # is the entire hypothesis under test, so a run through it is not the same
+    # measurement as a run through the service beneath it.
+    retriever: str = "search"
+    # Which slice of the dataset ran. A guidance-only run and a full run are
+    # both honest numbers and comparing them is not.
+    case_filter: str = "all"
 
     recall_at_k: float
     mrr_at_k: float
@@ -50,9 +58,17 @@ class EvalRecord(BaseModel):
         reranking off is a deliberate experiment, not a regression, and an
         automatic "vs last run" that conflated the two would report a 0.3 drop
         in MRR as though something had broken.
+
+        retriever and case_filter are here for the same reason. find_guidance
+        scored over the eight guidance cases is the number that decides whether
+        document classification earns its place; the full dataset through plain
+        search is a different question with a different answer, and a delta
+        between them would be meaningless in either direction.
         """
         return (
             self.config_hash == other.config_hash
             and self.fusion == other.fusion
             and self.reranker == other.reranker
+            and self.retriever == other.retriever
+            and self.case_filter == other.case_filter
         )

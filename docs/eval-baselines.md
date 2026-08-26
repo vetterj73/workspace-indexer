@@ -4,17 +4,23 @@
      rewritten on every recorded run, and anything added here is lost. -->
 
 Every recorded run, newest first. Two runs are only comparable when the
-configuration hash, fusion mode and reranker all match -- those are the columns
-to check before reading a delta as a result.
+configuration hash, fusion mode, reranker, tool and case group all match --
+those are the columns to check before reading a delta as a result. A
+find_guidance run over the eight guidance cases and a plain search run over all
+sixteen are both honest numbers, and comparing them is meaningless.
 
 Query text is deliberately omitted. A document quoting the eval queries becomes
 a perfect match for them, which puts it at the top of its own results; the full
 per-case detail lives in `evals/*.json`.
 
-| recorded | embedding | dims | fusion | reranker | recall@k | MRR@k | misses |
-|---|---|---|---|---|---|---|---|
-| 2026-08-26T04:48:23 | `voyageai:voyage-code-4` | 1024 | rrf | `voyageai:rerank-2.5-lite` | 0.875 | 0.750 | 3/16 |
-| 2026-08-26T04:11:55 | `voyageai:voyage-code-4` | 1024 | rrf | `voyageai:rerank-2.5-lite` | 0.875 | 0.745 | 3/16 |
+| recorded | embedding | dims | fusion | reranker | tool | cases | recall@k | MRR@k | misses |
+|---|---|---|---|---|---|---|---|---|---|
+| 2026-08-26T05:35:31 | `voyageai:voyage-code-4` | 1024 | rrf | `voyageai:rerank-2.5-lite` | search | all | 0.875 | 0.750 | 3/16 |
+| 2026-08-26T05:32:22 | `voyageai:voyage-code-4` | 1024 | rrf | `voyageai:rerank-2.5-lite` | find_guidance | guidance | 0.938 | 0.900 | 1/8 |
+| 2026-08-26T05:31:31 | `voyageai:voyage-code-4` | 1024 | rrf | `voyageai:rerank-2.5-lite` | find_guidance | guidance | 0.812 | 0.775 | 2/8 |
+| 2026-08-26T05:31:19 | `voyageai:voyage-code-4` | 1024 | rrf | `voyageai:rerank-2.5-lite` | search | guidance | 0.812 | 0.792 | 2/8 |
+| 2026-08-26T04:48:23 | `voyageai:voyage-code-4` | 1024 | rrf | `voyageai:rerank-2.5-lite` | search | all | 0.875 | 0.750 | 3/16 |
+| 2026-08-26T04:11:55 | `voyageai:voyage-code-4` | 1024 | rrf | `voyageai:rerank-2.5-lite` | search | all | 0.875 | 0.745 | 3/16 |
 
 ## Ad hoc analysis
 

@@ -9,16 +9,15 @@ folklore.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 import yaml
 
 from workspace_indexer.evaluation.eval_case import EvalCase
 from workspace_indexer.evaluation.eval_report import EvalReport
 from workspace_indexer.evaluation.eval_result import EvalResult, path_matches
+from workspace_indexer.evaluation.retriever import Retriever
 from workspace_indexer.obs.logging import get_logger
-from workspace_indexer.search.search_request import SearchRequest
-from workspace_indexer.search.search_service import SearchService
 
 log = get_logger("workspace_indexer.evaluation")
 
@@ -39,8 +38,8 @@ def load_cases(path: Path) -> list[EvalCase]:
 
 
 class EvalHarness:
-    def __init__(self, search: SearchService) -> None:
-        self._search = search
+    def __init__(self, retriever: Retriever) -> None:
+        self._retriever = retriever
 
     async def run(
         self,
@@ -48,24 +47,11 @@ class EvalHarness:
         *,
         limit: int = 10,
         label: str = "default",
-        fusion: Literal["rrf", "dense_only", "sparse_only"] | None = None,
-        rerank: bool | None = None,
     ) -> EvalReport:
         results: list[EvalResult] = []
 
         for case in cases:
-            hits = await self._search.search(
-                SearchRequest(
-                    query=case.query,
-                    limit=limit,
-                    fusion=fusion,
-                    rerank=rerank,
-                    # Reading every hit's file to compare text is pure overhead
-                    # for a measurement that only looks at paths.
-                    check_staleness=False,
-                )
-            )
-            found = [hit.rel_path for hit in hits]
+            found = await self._retriever.retrieve(case.query, limit)
             results.append(
                 EvalResult(
                     query=case.query,
@@ -79,6 +65,7 @@ class EvalHarness:
         log.info(
             "eval.report",
             label=label,
+            retriever=self._retriever.name,
             cases=len(results),
             recall=round(report.recall_at_k, 3),
             mrr=round(report.mrr_at_k, 3),

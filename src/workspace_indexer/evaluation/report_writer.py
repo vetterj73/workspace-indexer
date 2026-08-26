@@ -20,17 +20,23 @@ _HEADER = """# Eval baselines
      rewritten on every recorded run, and anything added here is lost. -->
 
 Every recorded run, newest first. Two runs are only comparable when the
-configuration hash, fusion mode and reranker all match -- those are the columns
-to check before reading a delta as a result.
+configuration hash, fusion mode, reranker, tool and case group all match --
+those are the columns to check before reading a delta as a result. A
+find_guidance run over the eight guidance cases and a plain search run over all
+sixteen are both honest numbers, and comparing them is meaningless.
 
 Query text is deliberately omitted. A document quoting the eval queries becomes
 a perfect match for them, which puts it at the top of its own results; the full
 per-case detail lives in `evals/*.json`.
 """
 
+# `tool` and `cases` are columns rather than a footnote because without them
+# three rows can share a configuration, differ by 0.15 MRR, and look like a
+# regression. They are what the numbers were measured *over*.
 _COLUMNS = (
-    "| recorded | embedding | dims | fusion | reranker | recall@k | MRR@k | misses |\n"
-    "|---|---|---|---|---|---|---|---|\n"
+    "| recorded | embedding | dims | fusion | reranker | tool | cases "
+    "| recall@k | MRR@k | misses |\n"
+    "|---|---|---|---|---|---|---|---|---|---|\n"
 )
 
 
@@ -72,6 +78,8 @@ def render(records: list[EvalRecord]) -> str:
         f"| {r.dimensions} "
         f"| {r.fusion} "
         f"| `{r.reranker}` "
+        f"| {r.retriever} "
+        f"| {r.case_filter} "
         f"| {r.recall_at_k:.3f} "
         f"| {r.mrr_at_k:.3f} "
         f"| {r.miss_count}/{r.case_count} |\n"
@@ -81,9 +89,7 @@ def render(records: list[EvalRecord]) -> str:
     return f"{_HEADER}\n{body}{_FOOTER}"
 
 
-def write_report(
-    records: list[EvalRecord], path: Path = DEFAULT_REPORT_PATH
-) -> Path:
+def write_report(records: list[EvalRecord], path: Path = DEFAULT_REPORT_PATH) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(render(records), encoding="utf-8")
     return path

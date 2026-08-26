@@ -179,8 +179,20 @@ inferring intent from query text.
 
 - **`search_code`** — implementation, with `test` and `generated` excluded by
   default. Replaces the reranker instruction hack.
-- **`find_guidance`** — `normative` and `design` only. This is the greenfield
-  case: no code to imitate, so retrieve the rules.
+- **`find_guidance`** — `normative`, `design` **and `guide`** [revised]. This is
+  the greenfield case: no code to imitate, so retrieve the rules.
+
+  `guide` was not in the plan. Normative + design alone scored recall 0.812 /
+  MRR 0.792 over the eight guidance cases — *no better than plain search*
+  (0.812 / 0.792). The filter gained `CLAUDE.md`, which plain search had never
+  once retrieved, and lost `CONTRIBUTING.md` entirely, because a contributing
+  guide is a `guide`. Adding the type gives **0.938 / 0.900**.
+
+  The eval case that caught this was written before the tool existed, with the
+  note *"deliberately a `guide`, not `normative`. If a type filter is ever
+  applied by default, this case is the one that catches it over-filtering."*
+  It did exactly that. Writing the dataset first is what made a plausible,
+  tidy-looking design fail loudly instead of quietly.
 - **`get_file_context`** — expand around a hit using `chunk_index` /
   `chunk_total`, which the payload already carries.
 - **`list_document_types`** — the taxonomy, as a tool.
@@ -188,6 +200,28 @@ inferring intent from query text.
 Separate tools rather than one tool with an intent argument, because **the agent
 already knows its intent** and declaring it is far more reliable than us
 inferring it from a query string.
+
+### Measured outcome [revised]
+
+`find_guidance` over the eight guidance cases, against plain search on the same
+eight:
+
+| | recall@10 | MRR@10 | misses |
+|---|---|---|---|
+| plain search | 0.812 | 0.792 | 2/8 |
+| find_guidance (normative + design) | 0.812 | 0.775 | 2/8 |
+| **find_guidance (+ guide)** | **0.938** | **0.900** | **1/8** |
+
+Per case, against plain search: one previously-unfixable miss became rank 1
+(*"what conventions must I follow when structuring a new module"* → `CLAUDE.md`,
+which had survived every embedding and reranking configuration tried), six
+unchanged at rank 1, and one regression (*"how should a new agent provider be
+designed"*, rank 3 → 5).
+
+That is the evidence #8 and #9 were gated on: rules-based classification does
+carry the guidance case. The remaining miss — *"how should this project handle
+logging and observability"* — is a recall problem rather than a ranking one,
+and a better classifier is not obviously the fix for it.
 
 ### The taxonomy resource
 
