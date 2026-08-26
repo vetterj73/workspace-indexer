@@ -11,6 +11,13 @@ data/
 .env
 config/workspace.yaml
 
+# Corpus configs and their eval datasets point at private repositories and
+# quote their internal file paths. This repository is public; a client's
+# directory structure is not ours to publish.
+config/workspace-corpus.yaml
+config/eval-corpus.yaml
+data/corpus-manifest.sqlite3
+
 # Personal editor/session preferences, not project config
 .claude/settings.local.json
 

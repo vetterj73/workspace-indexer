@@ -209,3 +209,105 @@ def test_syntax_error_is_flagged_but_not_fatal() -> None:
     text = "class Broken:\n    def f(self:\n        return (((\n"
     chunks = _chunk(text, min_tokens=1)
     assert chunks
+
+
+REACT_VIEW = """\
+import React, { useState } from 'react';
+
+interface Props { userId: string }
+
+const Cart: React.FC<Props> = ({ userId }) => {
+  const [items, setItems] = useState([]);
+  const handleAdd = (sku: string) => {
+    setItems([...items, sku]);
+  };
+  return (
+    <div className="cart">
+      <div className="cart__header">
+        <span>{userId}</span>
+      </div>
+      <ul>{items.map((i) => <li key={i}>{i}</li>)}</ul>
+    </div>
+  );
+};
+
+export default Cart;
+"""
+
+
+def test_an_arrow_function_component_is_attributed() -> None:
+    """The dominant React idiom. `const X: React.FC = () => {}` is a
+    lexical_declaration, which the symbol extractor does not report -- so every
+    chunk of a 29KB view came back with no symbol at all."""
+    chunks = _chunk(REACT_VIEW, "tsx")
+    assert chunks
+    assert any(c.meta.symbol_path == "Cart" for c in chunks)
+
+
+def test_every_chunk_of_a_component_carries_its_name() -> None:
+    """The second half of the same fix. A large component splits into JSX
+    fragments, and a chunk whose text begins `<div className='cart'>` cannot be
+    identified on its own."""
+    chunks = _chunk(REACT_VIEW, "tsx", max_tokens=40, min_tokens=1)
+    assert len(chunks) > 1
+
+    # Lines 5-19 are the component body. Line 20 is `export default Cart;`,
+    # which is outside it and correctly stays unnamed.
+    body = [c for c in chunks if 5 <= c.meta.start_line <= 19]
+    assert len(body) > 10
+    assert all(c.meta.symbol_path for c in body), [
+        (c.meta.start_line, c.meta.symbol_path) for c in body
+    ]
+    # Including the pure-markup fragments, which is the point.
+    markup = [c for c in body if c.source_text.strip().startswith("<")]
+    assert markup
+    assert all(c.meta.symbol_path == "Cart" for c in markup)
+
+
+def test_the_innermost_declaration_wins() -> None:
+    """A callback inside a component is labelled with the callback. Both are
+    true; the narrower one is more useful in a search result."""
+    chunks = _chunk(REACT_VIEW, "tsx", max_tokens=30, min_tokens=1)
+    named = {c.meta.symbol_path for c in chunks if c.meta.symbol_path}
+    assert "handleAdd" in named
+
+
+def test_a_plain_function_declaration_still_wins_over_the_scanner() -> None:
+    """The library's own symbols are authoritative where it has them.
+
+    Both forms in one file, so the scanner cannot be crediting itself for a
+    declaration the extractor already reported.
+    """
+    code = (
+        REACT_VIEW
+        + """
+function RunCard({ id }: { id: string }) {
+  const label = id.toUpperCase();
+  return <span title={label}>{id}</span>;
+}
+"""
+    )
+    chunks = _chunk(code, "tsx", max_tokens=60, min_tokens=1)
+    named = {c.meta.symbol_path for c in chunks if c.meta.symbol_path}
+    assert "RunCard" in named
+    assert "Cart" in named
+
+
+def test_python_attribution_is_unchanged() -> None:
+    """The scanner must not touch a language already scoring 88%.
+
+    Uses the module's own Python sample, so this fails if the new pass changes
+    attribution for a language it was never meant to run on.
+    """
+    chunks = _chunk(SAMPLE, "python", max_tokens=60, min_tokens=1)
+    named = {c.meta.symbol_path for c in chunks if c.meta.symbol_path}
+    assert named
+    # Every name still traces to a real def/class, never to an assignment.
+    assert all("lambda" not in str(n) for n in named)
+
+
+def test_a_config_object_does_not_name_a_chunk() -> None:
+    """`const config = {...}` is a declaration but not a definition."""
+    code = "const config = {\n  retries: 3,\n  timeout: 1000,\n};\n"
+    chunks = _chunk(code, "typescript")
+    assert not any(c.meta.symbol_path == "config" for c in chunks)

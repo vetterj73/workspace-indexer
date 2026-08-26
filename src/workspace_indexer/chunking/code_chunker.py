@@ -18,6 +18,8 @@ import tree_sitter_language_pack as tslp
 
 from workspace_indexer.chunking.chunk_factory import build_chunk
 from workspace_indexer.chunking.context_header import header_token_cost
+from workspace_indexer.chunking.declaration import Declaration
+from workspace_indexer.chunking.declaration_scanner import DeclarationScanner
 from workspace_indexer.chunking.text_chunker import TextChunker
 from workspace_indexer.chunking.token_estimate import estimate_tokens, tokens_to_bytes
 from workspace_indexer.config import ChunkingSection, CodeChunking
@@ -29,11 +31,14 @@ log = get_logger("workspace_indexer.chunking.code")
 
 class CodeChunker:
     name = "code"
-    version = 1
+    # 2: arrow-function and class-property declarations are attributed, which
+    # changes symbol_path on JS/TS chunks and so must force a re-chunk.
+    version = 2
     kinds = frozenset({FileKind.CODE})
 
     def __init__(self, workspace: str, fallback: TextChunker) -> None:
         self._workspace = workspace
+        self._declarations = DeclarationScanner()
         # Explicit rather than implicit: a file we cannot parse still gets
         # indexed, just without symbol awareness.
         self._fallback = fallback
@@ -75,6 +80,12 @@ class CodeChunker:
 
         symbol_kinds = {symbol.name: str(symbol.kind).lower() for symbol in result.symbols}
 
+        # Declarations the library does not report, with their line spans. In
+        # JS/TS a function assigned to a const is the dominant idiom and comes
+        # back with no symbol at all; the span also lets the JSX fragments a
+        # large component splits into inherit its name.
+        declared = self._declarations.scan(file.text, file.language)
+
         # Filter before counting: chunk_total has to be the number of chunks we
         # actually emit, or "part 3 of 9" points at a 7-chunk file. process()
         # emits a few degenerate fragments (a bare identifier, a stray brace)
@@ -110,8 +121,17 @@ class CodeChunker:
                 symbol_name = trail[-1]
                 carried_name, carried_context = None, ()
             else:
-                symbol_name = None
+                # Last resort before giving up: whichever missed declaration
+                # this chunk shares the most lines with.
+                enclosing = _best_match(
+                    declared,
+                    chunk.start_line + 1,
+                    chunk.start_line + max(1, len(source_text.splitlines())),
+                )
+                symbol_name = enclosing.name if enclosing else None
                 carried_name, carried_context = None, ()
+                if enclosing is not None:
+                    symbol_kinds.setdefault(enclosing.name, enclosing.kind)
 
             if symbol_name is None:
                 symbol_path = None
@@ -160,6 +180,29 @@ class CodeChunker:
     ) -> Iterator[Chunk]:
         log.debug("chunk.degraded_to_text", reason=reason, language=file.language)
         yield from self._fallback.chunk(file, config, parse_degraded=True)
+
+
+def _best_match(declared: list[Declaration], start_line: int, end_line: int) -> Declaration | None:
+    """The declaration sharing the most lines with this chunk.
+
+    Overlap rather than containment, because both directions happen. A 400-line
+    component splits into chunks that sit *inside* it; a small file becomes one
+    chunk that *contains* its component. Requiring containment either way would
+    leave half of them unnamed.
+
+    Ties break toward the narrower declaration, so a chunk covering a callback
+    inside a component is labelled with the callback -- both are true, and the
+    narrower one tells a reader more.
+    """
+    best: tuple[int, int, Declaration] | None = None
+    for declaration in declared:
+        overlap = min(end_line, declaration.end_line) - max(start_line, declaration.start_line) + 1
+        if overlap <= 0:
+            continue
+        width = declaration.end_line - declaration.start_line
+        if best is None or (overlap, -width) > (best[0], -best[1]):
+            best = (overlap, width, declaration)
+    return best[2] if best else None
 
 
 def prefetch_languages(languages: set[str]) -> None:
