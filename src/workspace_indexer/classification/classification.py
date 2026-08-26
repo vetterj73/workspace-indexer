@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from workspace_indexer.classification.document_type import DocumentType
+from workspace_indexer.models import DocumentType
 
 
 class Classification(BaseModel):

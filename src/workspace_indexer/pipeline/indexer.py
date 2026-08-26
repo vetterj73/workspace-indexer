@@ -9,16 +9,18 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from workspace_indexer.chunking import ChunkerRegistry, prefetch_languages, read_source
+from workspace_indexer.classification import Classification, DocumentClassifier
 from workspace_indexer.config import Settings, WorkspaceConfig
 from workspace_indexer.discovery import Walker
 from workspace_indexer.discovery.file_candidate import FileCandidate
 from workspace_indexer.embedding.embedding_service import EmbeddingService
 from workspace_indexer.embedding.sparse_backend import SparseBackend
-from workspace_indexer.models import EmbeddingSpace, RunStats
+from workspace_indexer.models import EmbeddingSpace, RunStats, SourceFile
 from workspace_indexer.obs.context import bound, file_context, new_run_id
 from workspace_indexer.obs.logging import get_logger
 from workspace_indexer.pipeline.pending_file import PendingFile
-from workspace_indexer.state import ChunkDelta, IndexDecision, Manifest
+from workspace_indexer.secrets import SecretWithheldError
+from workspace_indexer.state import IndexDecision, Manifest
 from workspace_indexer.storage.vector_store import VectorStore
 
 log = get_logger("workspace_indexer.pipeline")
@@ -41,6 +43,7 @@ class Indexer:
         sparse: SparseBackend,
         store: VectorStore,
         space: EmbeddingSpace,
+        classifier: DocumentClassifier,
         flush_chunks: int = DEFAULT_FLUSH_CHUNKS,
     ) -> None:
         self._config = config
@@ -51,6 +54,7 @@ class Indexer:
         self._sparse = sparse
         self._store = store
         self._space = space
+        self._classifier = classifier
         self._flush_chunks = max(1, flush_chunks)
 
     async def run(
@@ -114,6 +118,7 @@ class Indexer:
         prefetch_languages({c.language for c in candidates if c.language})
 
         seen: set[tuple[str, str]] = set()
+        purged: list[tuple[str, str]] = []
         pending: list[PendingFile] = []
         buffered = 0
 
@@ -124,6 +129,13 @@ class Indexer:
             with file_context(candidate.root_label, candidate.rel_path):
                 try:
                     prepared = self._prepare(candidate, stats, force=force)
+                except SecretWithheldError:
+                    # Withholding the file from future runs is not enough: an
+                    # earlier run may already have embedded it, and leaving
+                    # that copy in the index defeats the point of detecting it.
+                    stats.files_skipped += 1
+                    purged.append((candidate.root_label, candidate.rel_path))
+                    continue
                 except Exception as exc:
                     # One unreadable or unparseable file must not abort a run
                     # that has already paid for thousands of embeddings.
@@ -145,6 +157,8 @@ class Indexer:
             await self._flush(pending, stats, dry_run=dry_run)
 
         if not dry_run:
+            for root_label, rel_path in purged:
+                await self._purge(root_label, rel_path, stats)
             await self._remove_orphans(seen, stats, only_root=only_root)
 
     def _prepare(
@@ -184,22 +198,60 @@ class Indexer:
 
         chunker = self._registry.resolve(source, self._config.chunking)
         chunks = list(chunker.chunk(source, self._config.chunking))
-        produced = [c.chunk_id for c in chunks]
-        if force:
-            # Rebuild rather than reconcile. Distrusting mtime alone does not
-            # need --force, because the content hash already catches that.
-            delta = ChunkDelta(to_upsert=produced, to_delete=[], unchanged=[])
-        else:
-            delta = self._manifest.diff_chunks(
-                source.root_label, source.rel_path, self._space.slug(), produced
+
+        # Classify once per file and stamp every chunk with the verdict. Done
+        # here rather than inside the chunkers, which have no business knowing
+        # what role a document plays -- their concern is how to split it.
+        classification = self._classify(source)
+        chunks = [
+            chunk.model_copy(
+                update={
+                    "meta": chunk.meta.model_copy(
+                        update={
+                            "doc_type": classification.doc_type,
+                            "doc_type_confidence": classification.confidence,
+                            "classifier_version": self._classifier.version,
+                        }
+                    )
+                }
             )
+            for chunk in chunks
+        ]
+        produced = [c.chunk_id for c in chunks]
+        delta = self._manifest.diff_chunks(
+            source.root_label, source.rel_path, self._space.slug(), produced
+        )
+        if force:
+            # Rebuild rather than reconcile: re-embed everything this file
+            # produces. Distrusting mtime alone does not need --force, since
+            # the content hash already catches that.
+            #
+            # to_delete still comes from the diff. Dropping it left chunks in
+            # the store that the file no longer produces, with nothing able to
+            # remove them -- a rebuild that quietly accumulates orphans is
+            # worse than no rebuild.
+            delta = delta.model_copy(update={"to_upsert": produced, "unchanged": []})
         return PendingFile(
             source=source,
             chunker=chunker.name,
             chunker_version=chunker.version,
             chunks=chunks,
             delta=delta,
+            classification=classification,
         )
+
+    def _classify(self, source: SourceFile) -> Classification:
+        """Reuse a stored verdict when the bytes and the ruleset both match.
+
+        Rules are cheap enough that this barely matters today. It matters a
+        great deal once a model-based rung exists, and building the cache in
+        from the start is what stops classification drift from rewriting
+        payloads on every run.
+        """
+        cached = self._manifest.cached_classification(source, self._classifier.version)
+        if cached is not None:
+            return cached
+        return self._classifier.classify(source)
 
     async def _flush(
         self, pending: list[PendingFile], stats: RunStats, *, dry_run: bool
@@ -243,13 +295,27 @@ class Indexer:
     def _record(self, file: PendingFile) -> None:
         source = file.source
         self._manifest.record_file(
-            source, chunker=file.chunker, chunker_version=file.chunker_version
+            source,
+            chunker=file.chunker,
+            chunker_version=file.chunker_version,
+            classification=file.classification,
+            classifier_version=self._classifier.version,
         )
         self._manifest.forget_chunks(file.delta.to_delete, self._space.slug())
         self._manifest.record_chunks(file.chunks, self._space.slug())
         self._manifest.record_space(
             source.root_label, source.rel_path, self._space.slug(), len(file.chunks)
         )
+
+    async def _purge(self, root_label: str, rel_path: str, stats: RunStats) -> None:
+        """Remove every trace of a file we have decided not to index."""
+        with file_context(root_label, rel_path):
+            existing = self._manifest.chunk_ids_for(root_label, rel_path, self._space.slug())
+            await self._store.delete_by_path(self._space, root_label, rel_path)
+            self._manifest.forget_file(root_label, rel_path)
+            stats.chunks_deleted += len(existing)
+            if existing:
+                log.warning("file.purged", chunks=len(existing), reason="secret_withheld")
 
     async def _remove_orphans(
         self, seen: set[tuple[str, str]], stats: RunStats, *, only_root: str | None

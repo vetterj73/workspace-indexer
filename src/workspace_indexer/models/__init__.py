@@ -7,6 +7,7 @@ One class per module, re-exported here so callers write
 from workspace_indexer.models.chunk import Chunk
 from workspace_indexer.models.chunk_id import CHUNK_NAMESPACE, compute_chunk_id
 from workspace_indexer.models.chunk_meta import ChunkMeta
+from workspace_indexer.models.document_type import DocumentType
 from workspace_indexer.models.embedding_space import EmbeddingSpace
 from workspace_indexer.models.file_kind import FileKind
 from workspace_indexer.models.hashing import sha256_text
@@ -21,6 +22,7 @@ __all__ = [
     "CHUNK_NAMESPACE",
     "Chunk",
     "ChunkMeta",
+    "DocumentType",
     "EmbeddingSpace",
     "FileKind",
     "RepoInfo",

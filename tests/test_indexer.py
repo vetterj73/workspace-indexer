@@ -17,6 +17,7 @@ from tests.conftest import ConfigFactory
 from tests.fake_embedding_backend import FakeEmbeddingBackend
 from tests.fake_sparse_backend import FakeSparseBackend
 from workspace_indexer.chunking import ChunkerRegistry
+from workspace_indexer.classification import RuleClassifier
 from workspace_indexer.config import Settings, WorkspaceConfig
 from workspace_indexer.embedding.embedding_service import EmbeddingService
 from workspace_indexer.models import EmbeddingSpace
@@ -52,6 +53,7 @@ class Harness:
             sparse=self.sparse,
             store=self.store,
             space=space,
+            classifier=RuleClassifier(),
             flush_chunks=8,
         )
 
@@ -262,3 +264,87 @@ async def test_stats_report_tokens_and_cost(harness: Harness) -> None:
     stats = await harness.indexer().run()
     assert stats.tokens_embedded > 0
     assert stats.est_cost_usd > 0
+
+
+async def test_force_still_removes_chunks_that_are_no_longer_produced(
+    harness: Harness, workspace: Path
+) -> None:
+    """--force rebuilds, but it must still reconcile. Dropping to_delete left
+    chunks in the store the file no longer produces, with nothing able to
+    remove them -- a rebuild that quietly accumulates orphans."""
+    await harness.indexer().run()
+    target = workspace / "repo_one" / "src" / "widget.py"
+    target.write_text("def only_one():\n    return 1\n", encoding="utf-8")
+
+    stats = await harness.indexer().run(force=True)
+    assert stats.chunks_deleted > 0
+    assert await harness.store.count(SPACE) == harness.manifest.chunk_count(SPACE.slug())
+
+
+async def test_chunks_carry_the_document_type(harness: Harness) -> None:
+    """One classification per file, inherited by every chunk of it."""
+    await harness.indexer().run()
+    types = {
+        str(payload.get("doc_type"))
+        async for _, payload, _ in harness.store.scroll(SPACE)
+    }
+    assert "implementation" in types
+    assert None not in types
+    assert "MISSING" not in types
+
+
+async def test_classification_is_cached_between_runs(harness: Harness) -> None:
+    """Cheap for rules, and the thing that stops a future model rung from
+    re-reading the whole workspace on every run."""
+    await harness.indexer().run()
+    source_count = harness.manifest.file_count()
+    assert source_count > 0
+    from tests.conftest import make_source
+
+    for rel in ("repo_one/src/widget.py",):
+        record = harness.manifest.get_file("workspace", rel)
+        assert record is not None
+        cached = harness.manifest.cached_classification(
+            make_source("x", rel_path=rel).model_copy(
+                update={"root_label": "workspace", "sha256": record.sha256}
+            ),
+            classifier_version=1,
+        )
+        assert cached is not None
+        assert cached.decided
+
+
+async def test_a_newly_withheld_file_has_its_old_chunks_purged(
+    harness: Harness, workspace: Path
+) -> None:
+    """A file indexed before the scanner existed, or before a secret was added
+    to it, must not keep its old chunks. Withholding future runs while leaving
+    the earlier copy in the index defeats the point of detecting it."""
+    target = workspace / "repo_one" / "src" / "widget.py"
+    await harness.indexer().run()
+    assert harness.manifest.get_file("workspace", "repo_one/src/widget.py") is not None
+    before = await harness.store.count(SPACE)
+
+    key = "AK" + "IA" + "IOSFODNN7EXAMPLE"
+    target.write_text(f'AWS_KEY = "{key}"\n', encoding="utf-8")
+
+    stats = await harness.indexer().run()
+    assert stats.chunks_deleted > 0
+    assert await harness.store.count(SPACE) < before
+    assert harness.manifest.get_file("workspace", "repo_one/src/widget.py") is None
+    paths = {
+        str(payload.get("rel_path")) async for _, payload, _ in harness.store.scroll(SPACE)
+    }
+    assert "repo_one/src/widget.py" not in paths
+
+
+async def test_a_withheld_file_does_not_abort_the_run(
+    harness: Harness, workspace: Path
+) -> None:
+    key = "AK" + "IA" + "IOSFODNN7EXAMPLE"
+    (workspace / "repo_one" / "secrets.json").write_text(
+        f'{{"aws": "{key}"}}', encoding="utf-8"
+    )
+    stats = await harness.indexer().run()
+    assert stats.errors == 0
+    assert stats.chunks_upserted > 0

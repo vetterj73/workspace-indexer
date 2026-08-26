@@ -12,13 +12,12 @@ import pytest
 from tests.conftest import make_source
 from workspace_indexer.classification import (
     Classification,
-    DocumentType,
     ModalDensityRule,
     PathRule,
     RuleClassifier,
     modal_density,
 )
-from workspace_indexer.models import FileKind, SourceFile
+from workspace_indexer.models import DocumentType, FileKind, SourceFile
 
 
 def _file(rel_path: str, text: str = "body text", kind: FileKind = FileKind.MARKDOWN) -> SourceFile:

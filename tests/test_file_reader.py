@@ -9,9 +9,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from workspace_indexer.chunking.file_reader import read_source
 from workspace_indexer.discovery.file_candidate import FileCandidate
 from workspace_indexer.models import FileKind
+from workspace_indexer.secrets import SecretWithheldError
 
 
 def _candidate(path: Path, kind: FileKind, language: str | None = None) -> FileCandidate:
@@ -147,14 +150,16 @@ def test_a_file_holding_a_credential_is_not_indexed(tmp_path: Path) -> None:
     path = tmp_path / "settings.json"
     token = "github" + "_pat_" + "11ABCDEFG0" + "z" * 30 + "Qw7"
     path.write_text(f'{{"Authorization": "Bearer {token}"}}', encoding="utf-8")
-    assert read_source(_candidate(path, FileKind.TEXT)) is None
+    with pytest.raises(SecretWithheldError):
+        read_source(_candidate(path, FileKind.TEXT))
 
 
 def test_a_credential_in_source_code_is_withheld_too(tmp_path: Path) -> None:
     path = tmp_path / "client.py"
     key = "AK" + "IA" + "IOSFODNN7EXAMPLE"
     path.write_text(f'AWS_KEY = "{key}"\n', encoding="utf-8")
-    assert read_source(_candidate(path, FileKind.CODE, "python")) is None
+    with pytest.raises(SecretWithheldError):
+        read_source(_candidate(path, FileKind.CODE, "python"))
 
 
 def test_an_env_template_still_indexes(tmp_path: Path) -> None:
@@ -173,7 +178,8 @@ def test_the_allow_list_waives_the_scan(tmp_path: Path) -> None:
     key = "AK" + "IA" + "IOSFODNN7EXAMPLE"
     path.write_text(f'{{"token": "{key}"}}', encoding="utf-8")
     candidate = _candidate(path, FileKind.TEXT)
-    assert read_source(candidate) is None
+    with pytest.raises(SecretWithheldError):
+        read_source(candidate)
     assert read_source(candidate, ["fixture.json"]) is not None
 
 
@@ -182,4 +188,18 @@ def test_the_allow_list_is_scoped_not_global(tmp_path: Path) -> None:
     path = tmp_path / "other.json"
     key = "AK" + "IA" + "IOSFODNN7EXAMPLE"
     path.write_text(f'{{"token": "{key}"}}', encoding="utf-8")
-    assert read_source(_candidate(path, FileKind.TEXT), ["fixture.json"]) is None
+    with pytest.raises(SecretWithheldError):
+        read_source(_candidate(path, FileKind.TEXT), ["fixture.json"])
+
+
+def test_the_error_carries_findings_but_never_the_value(tmp_path: Path) -> None:
+    """The exception is logged and may reach a terminal. Carrying the token
+    would defeat the detection that raised it."""
+    key = "AK" + "IA" + "IOSFODNN7EXAMPLE"
+    path = tmp_path / "conf.json"
+    path.write_text(f'{{"aws": "{key}"}}', encoding="utf-8")
+    with pytest.raises(SecretWithheldError) as caught:
+        read_source(_candidate(path, FileKind.TEXT))
+    assert caught.value.findings
+    assert key not in str(caught.value)
+    assert key not in " ".join(str(f) for f in caught.value.findings)

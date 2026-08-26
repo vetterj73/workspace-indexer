@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
+from workspace_indexer.models.document_type import DocumentType
 from workspace_indexer.models.file_kind import FileKind
 
 
@@ -22,6 +23,8 @@ class SearchHit(BaseModel):
     language: str | None = None
     symbol_path: str | None = None
     symbol_name: str | None = None
+    doc_type: DocumentType = DocumentType.UNKNOWN
+    doc_confidence: float = 0.0
     start_line: int = 1
     end_line: int = 1
     source_text: str = ""

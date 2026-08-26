@@ -18,5 +18,8 @@ class DocumentClassifier(Protocol):
     """
 
     name: str
+    # Bump when the rules change, so the manifest reclassifies rather than
+    # trusting a cached verdict from an older ruleset.
+    version: int
 
     def classify(self, file: SourceFile) -> Classification: ...

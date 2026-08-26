@@ -380,6 +380,7 @@ def build_filter(filters: SearchFilters | None) -> models.Filter | None:
         "language": filters.language,
         "symbol_kind": filters.symbol_kind,
         "kind": filters.kind.value if filters.kind else None,
+        "doc_type": filters.doc_type.value if filters.doc_type else None,
     }
     must: list[models.Condition] = [
         models.FieldCondition(key=key, match=models.MatchValue(value=value))
@@ -391,4 +392,15 @@ def build_filter(filters: SearchFilters | None) -> models.Filter | None:
         must.append(
             models.FieldCondition(key="ancestors", match=models.MatchValue(value=prefix))
         )
-    return models.Filter(must=must) if must else None
+
+    # must_not rather than a positive list: a caller saying "not tests" should
+    # not have to enumerate every type it does want, and a type added to the
+    # taxonomy later is then included by default rather than silently dropped.
+    must_not: list[models.Condition] = [
+        models.FieldCondition(key="doc_type", match=models.MatchValue(value=doc_type.value))
+        for doc_type in filters.exclude_doc_types
+    ]
+
+    if not must and not must_not:
+        return None
+    return models.Filter(must=must, must_not=must_not or None)
