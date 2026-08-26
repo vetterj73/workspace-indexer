@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -12,7 +13,17 @@ from rich.table import Table
 
 from workspace_indexer.app_context import AppContext
 from workspace_indexer.config import ConfigError
-from workspace_indexer.evaluation import EvalHarness, load_cases
+from workspace_indexer.evaluation import (
+    EvalComparison,
+    EvalHarness,
+    EvalRecord,
+    compare,
+    latest_comparable,
+    load_cases,
+    read_records,
+    write_record,
+    write_report,
+)
 from workspace_indexer.models import FileKind, SearchFilters
 from workspace_indexer.search import Reprojector, SearchRequest
 
@@ -292,6 +303,12 @@ def evaluate(
     dimensions: Annotated[
         int | None, typer.Option("--dimensions", help="Evaluate a reprojected collection")
     ] = None,
+    save: Annotated[
+        bool, typer.Option("--save/--no-save", help="Record the run under evals/")
+    ] = True,
+    compare_previous: Annotated[
+        bool, typer.Option("--compare/--no-compare", help="Diff against the last comparable run")
+    ] = True,
 ) -> None:
     """Score retrieval quality against a dataset of query/expected-file pairs."""
 
@@ -316,6 +333,26 @@ def evaluate(
                 fusion=fusion,  # type: ignore[arg-type]
                 rerank=rerank,
             )
+            active = space or ctx.space
+            record = EvalRecord(
+                recorded_at=datetime.now(UTC).isoformat(),
+                label=label,
+                config_hash=ctx.settings.config_hash(),
+                space_slug=active.slug(),
+                embedding_model=active.model,
+                dimensions=active.dimensions,
+                fusion=fusion or ctx.config.search.fusion,
+                reranker="none" if rerank is False else ctx.config.search.rerank.model,
+                limit=limit,
+                recall_at_k=report.recall_at_k,
+                mrr_at_k=report.mrr_at_k,
+                case_count=len(report.results),
+                miss_count=len(report.misses),
+                results=report.results,
+            )
+            # Written before the comparison, so an interrupted comparison does
+            # not lose the measurement that was just paid for.
+            saved = write_record(record) if save else None
         except FileNotFoundError as exc:
             console.print(f"[red]{exc}[/red]")
             raise typer.Exit(code=2) from exc
@@ -331,7 +368,43 @@ def evaluate(
             console.print(f"    expected {miss.expected}")
             console.print(f"    got      {miss.found[:3]}")
 
+        history = read_records()
+        if saved is not None:
+            # Regenerated on every run, so the document cannot drift from what
+            # the runs actually produced.
+            write_report(history)
+
+        previous = latest_comparable(history, record)
+        if compare_previous and previous is not None:
+            _print_comparison(compare(previous, record))
+        elif compare_previous:
+            console.print("[dim]No earlier run with a matching configuration to compare.[/dim]")
+
+        if saved is not None:
+            console.print(f"[dim]Recorded {saved}[/dim]")
+
     asyncio.run(run())
+
+
+def _print_comparison(comparison: EvalComparison) -> None:
+    """Aggregate first, then what actually moved.
+
+    A run that improves the average while breaking two cases is a result worth
+    seeing, and the aggregate alone hides it.
+    """
+    def arrow(delta: float) -> str:
+        colour = "green" if delta > 0 else "red" if delta < 0 else "dim"
+        return f"[{colour}]{delta:+.3f}[/{colour}]"
+
+    console.print(f"\n[bold]vs {comparison.before.label}[/bold] ({comparison.before.recorded_at})")
+    console.print(f"  recall {arrow(comparison.recall_delta)}   MRR {arrow(comparison.mrr_delta)}")
+
+    for movement in comparison.improved:
+        console.print(f"  [green]better[/green] {movement}")
+    for movement in comparison.regressed:
+        console.print(f"  [red]worse [/red] {movement}")
+    if not comparison.improved and not comparison.regressed:
+        console.print("  [dim]no case changed rank[/dim]")
 
 
 def _preview(text: str, lines: int = 6) -> str:
