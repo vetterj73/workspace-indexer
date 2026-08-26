@@ -29,6 +29,19 @@ class Settings(BaseSettings):
     # chunks that each happen to be huge fails the whole batch.
     embedding_max_batch_tokens: int = 100_000
     voyage_api_key: str | None = None
+    # What a million input tokens costs, used only when the provider does not
+    # report a price. voyage-code-4 is $0.12/M at the time of writing, and
+    # genai-prices has no entry for it -- so without this every run records
+    # $0.0000, which reads as free rather than as unknown.
+    #
+    # A number in a config file goes stale silently, so anything priced this
+    # way is reported as an estimate, never as a cost.
+    embedding_price_per_mtok: float | None = None
+    # Size of the provider's free allowance, if it has one. Used by `status` to
+    # show how much of it this manifest has consumed. An approximation by
+    # construction: the allowance belongs to the account and is drawn down by
+    # everything using the key, not only by this index.
+    embedding_free_tier_tokens: int | None = None
 
     # ---- sparse ----
     sparse_model: str = "Qdrant/bm25"

@@ -19,6 +19,14 @@ class RunStats(BaseModel):
     chunks_deleted: int = 0
     tokens_embedded: int = 0
     est_cost_usd: float = 0.0
+    # Requests neither the provider nor config could price. Carried this far
+    # on purpose: EmbeddingStats drew the distinction correctly and RunStats
+    # used to drop it, which is how `$0.0000` came to mean both "free" and
+    # "no idea".
+    unpriced_requests: int = 0
+    # True when the cost above came from a configured rate rather than from
+    # the provider.
+    cost_is_estimate: bool = False
     errors: int = 0
     config_hash: str = ""
     skip_reasons: dict[str, int] = Field(default_factory=dict)

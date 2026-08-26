@@ -16,6 +16,7 @@ from workspace_indexer.chunking.token_estimate import estimate_tokens
 from workspace_indexer.embedding.embedding_backend import EmbeddingBackend
 from workspace_indexer.embedding.embedding_stats import EmbeddingStats
 from workspace_indexer.embedding.retry_policy import RetryPolicy
+from workspace_indexer.embedding.token_pricer import TokenPricer
 from workspace_indexer.models import EmbeddingSpace, FileKind
 from workspace_indexer.obs.logging import get_logger
 
@@ -36,8 +37,11 @@ class EmbeddingService:
         max_concurrency: int = 4,
         max_batch_tokens: int = 100_000,
         retry: RetryPolicy | None = None,
+        pricer: TokenPricer | None = None,
     ) -> None:
         self._backend = backend
+        self._pricer = pricer or TokenPricer(None)
+        self._warned_unpriced = False
         self._batch_size = max(1, batch_size)
         self._max_batch_tokens = max(1, max_batch_tokens)
         self._retry = retry or RetryPolicy()
@@ -98,6 +102,54 @@ class EmbeddingService:
             batches.append(current)
         return batches
 
+    def _tokens_for(self, batch: list[str]) -> tuple[int, bool]:
+        """The provider's count where it gave one, ours otherwise.
+
+        Ours runs high -- 13-22% per call against voyage-code-4, and 45% high
+        cumulatively across this manifest once dry runs and retries are in the
+        mix. Fine for deciding a batch size, far too loose to bill or budget
+        against, which is what the reported count is for.
+        """
+        reported = self._backend.last_tokens()
+        if reported is not None:
+            return reported, True
+        self.stats.estimated_token_requests += 1
+        return sum(estimate_tokens(text, FileKind.CODE) for text in batch), False
+
+    def _price(self, tokens: int) -> float | None:
+        """Provider price, then a configured rate, then an honest unknown."""
+        cost = self._backend.last_cost_usd()
+        if cost is not None:
+            self.stats.est_cost_usd += cost
+            return cost
+
+        estimated = self._pricer.cost_of(tokens)
+        if estimated is not None:
+            self.stats.est_cost_usd += estimated
+            self.stats.config_priced_requests += 1
+            return estimated
+
+        self.stats.unpriced_requests += 1
+        self._warn_unpriced_once()
+        return None
+
+    def _warn_unpriced_once(self) -> None:
+        """Said during the run, not only discovered in the table afterwards.
+
+        Once per process: this fires on every batch of a full index, and a
+        thousand copies of the same warning is how a real one gets missed.
+        """
+        if self._warned_unpriced:
+            return
+        self._warned_unpriced = True
+        log.warning(
+            "embed.unpriced",
+            model=self._backend.space.model,
+            detail="the provider reports no price and EMBEDDING_PRICE_PER_MTOK is "
+            "unset, so this run's cost will be recorded as unknown rather than as "
+            "zero. Set it to price the run.",
+        )
+
     async def _embed_batch(self, batch: list[str]) -> list[list[float]]:
         async with self._semaphore:
             started = time.monotonic()
@@ -106,19 +158,16 @@ class EmbeddingService:
             )
             self._check_dimensions(vectors)
 
-            tokens = sum(estimate_tokens(text, FileKind.CODE) for text in batch)
-            cost = self._backend.last_cost_usd()
+            tokens, reported = self._tokens_for(batch)
+            cost = self._price(tokens)
             self.stats.documents += len(batch)
             self.stats.tokens += tokens
-            if cost is None:
-                self.stats.unpriced_requests += 1
-            else:
-                self.stats.est_cost_usd += cost
 
             log.info(
                 "embed.batch",
                 documents=len(batch),
-                est_tokens=tokens,
+                tokens=tokens,
+                tokens_reported=reported,
                 model=self._backend.space.model,
                 duration_ms=round((time.monotonic() - started) * 1000, 1),
                 cost_usd=cost,

@@ -51,3 +51,7 @@ class FastembedDenseBackend:
     def last_cost_usd(self) -> float | None:
         # Local inference is free, which is different from unknown: report 0.
         return 0.0
+
+    def last_tokens(self) -> int | None:
+        # No provider, so no authoritative count -- the caller estimates.
+        return None

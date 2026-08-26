@@ -55,17 +55,24 @@ class Manifest:
         live index rather than at startup. Rebuilding is not an acceptable
         answer when a full index costs real time and money.
         """
-        existing = {str(row["name"]) for row in self._db.execute("PRAGMA table_info(files)")}
         additions = {
-            "doc_type": "TEXT NOT NULL DEFAULT 'unknown'",
-            "doc_confidence": "REAL NOT NULL DEFAULT 0.0",
-            "doc_reason": "TEXT NOT NULL DEFAULT ''",
-            "classifier_version": "INTEGER NOT NULL DEFAULT 0",
+            "files": {
+                "doc_type": "TEXT NOT NULL DEFAULT 'unknown'",
+                "doc_confidence": "REAL NOT NULL DEFAULT 0.0",
+                "doc_reason": "TEXT NOT NULL DEFAULT ''",
+                "classifier_version": "INTEGER NOT NULL DEFAULT 0",
+            },
+            "runs": {
+                "unpriced_requests": "INTEGER NOT NULL DEFAULT 0",
+                "cost_is_estimate": "INTEGER NOT NULL DEFAULT 0",
+            },
         }
-        for column, definition in additions.items():
-            if column not in existing:
-                self._db.execute(f"ALTER TABLE files ADD COLUMN {column} {definition}")
-                log.info("state.migrated", table="files", column=column)
+        for table, columns in additions.items():
+            existing = {str(row["name"]) for row in self._db.execute(f"PRAGMA table_info({table})")}
+            for column, definition in columns.items():
+                if column not in existing:
+                    self._db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+                    log.info("state.migrated", table=table, column=column)
 
     def __enter__(self) -> Manifest:
         return self
@@ -435,7 +442,8 @@ class Manifest:
         self._db.execute(
             "UPDATE runs SET finished_at = ?, files_seen = ?, files_skipped = ?, "
             "files_changed = ?, chunks_upserted = ?, chunks_deleted = ?, "
-            "tokens_embedded = ?, est_cost_usd = ?, errors = ? WHERE run_id = ?",
+            "tokens_embedded = ?, est_cost_usd = ?, unpriced_requests = ?, "
+            "cost_is_estimate = ?, errors = ? WHERE run_id = ?",
             (
                 (stats.finished_at or datetime.now(UTC)).isoformat(),
                 stats.files_seen,
@@ -445,10 +453,22 @@ class Manifest:
                 stats.chunks_deleted,
                 stats.tokens_embedded,
                 stats.est_cost_usd,
+                stats.unpriced_requests,
+                int(stats.cost_is_estimate),
                 stats.errors,
                 stats.run_id,
             ),
         )
+
+    def total_tokens_embedded(self) -> int:
+        """Every token this manifest has paid to embed, across all runs.
+
+        A floor on account usage rather than a measure of it: work embedded
+        with the same key outside this index is invisible here, and our own
+        figure is soft wherever the provider reported no count.
+        """
+        row = self._db.execute("SELECT COALESCE(SUM(tokens_embedded), 0) AS n FROM runs").fetchone()
+        return int(row["n"])
 
     def recent_runs(self, limit: int = 10) -> list[RunRecord]:
         return [
