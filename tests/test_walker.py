@@ -173,3 +173,31 @@ def test_configured_eval_dataset_is_never_walked(
     config = config_for(eval={"dataset": str(dataset)})
     found = {c.rel_path for c in Walker(config).walk()}
     assert "plain_folder/eval.yaml" not in found
+
+
+def test_our_own_eval_artefacts_are_never_discovered(
+    workspace: Path, config_for: ConfigFactory
+) -> None:
+    """Every eval artefact quotes the query text of every case verbatim.
+
+    Indexing one makes it a near-perfect lexical *and* semantic match for the
+    queries used to score retrieval, so the harness ends up measuring our own
+    output instead of the workspace. This has now happened three times, in
+    three different files, which is why the rule is enforced in code rather
+    than left to the user-editable exclude list.
+    """
+    (workspace / "evals").mkdir()
+    (workspace / "evals" / "2026-01-01-run.json").write_text(
+        '{"results": [{"query": "how does the walker skip files"}]}', encoding="utf-8"
+    )
+    (workspace / "repo_one" / "evals").mkdir()
+    (workspace / "repo_one" / "evals" / "nested-run.json").write_text("{}", encoding="utf-8")
+    (workspace / "docs").mkdir(exist_ok=True)
+    (workspace / "docs" / "eval-baselines.md").write_text("# Baselines\n", encoding="utf-8")
+
+    # The exclude list a user would plausibly write mentions none of these.
+    found = _by_path(config_for())
+
+    assert "evals/2026-01-01-run.json" not in found
+    assert "repo_one/evals/nested-run.json" not in found
+    assert "docs/eval-baselines.md" not in found

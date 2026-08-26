@@ -33,9 +33,9 @@ index:
     - "**/.mypy_cache/**"
     - "**/.pytest_cache/**"
     - "**/.ruff_cache/**"
-    # Quotes the eval queries verbatim, so indexing it makes it the top
-    # hit for its own queries.
-    - "**/docs/eval-baselines.md"
+    # Our own eval artefacts (config/eval.yaml, evals/, docs/eval-baselines.md)
+    # need no entry here: they quote every eval query verbatim, so excluding
+    # them is a correctness rule and is enforced in code, not configuration.
 
   # Paths where the content secret-scan is expected to produce false
   # positives: fixtures holding synthetic tokens, files of checksums. Scoped
