@@ -13,6 +13,7 @@ from workspace_indexer.embedding.fastembed_dense_backend import FastembedDenseBa
 from workspace_indexer.embedding.fastembed_sparse_backend import FastembedSparseBackend
 from workspace_indexer.embedding.pydantic_ai_backend import PydanticAiBackend
 from workspace_indexer.embedding.sparse_backend import SparseBackend
+from workspace_indexer.embedding.token_pricer import TokenPricer
 from workspace_indexer.models import EmbeddingSpace
 from workspace_indexer.obs.logging import get_logger
 
@@ -52,4 +53,5 @@ def build_embedding_service(settings: Settings) -> EmbeddingService:
         batch_size=settings.embedding_batch_size,
         max_concurrency=settings.embedding_max_concurrency,
         max_batch_tokens=settings.embedding_max_batch_tokens,
+        pricer=TokenPricer(settings.embedding_price_per_mtok),
     )

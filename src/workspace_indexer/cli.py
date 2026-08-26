@@ -29,7 +29,7 @@ from workspace_indexer.evaluation import (
 )
 from workspace_indexer.evaluation.search_retriever import Fusion
 from workspace_indexer.mcp import QueryService, TaxonomyService
-from workspace_indexer.models import EmbeddingSpace, FileKind, SearchFilters
+from workspace_indexer.models import EmbeddingSpace, FileKind, RunStats, SearchFilters
 from workspace_indexer.search import Reprojector, SearchRequest
 
 app = typer.Typer(
@@ -76,7 +76,7 @@ def index(
         table.add_row("chunks written", str(stats.chunks_upserted))
         table.add_row("chunks removed", str(stats.chunks_deleted))
         table.add_row("tokens", f"{stats.tokens_embedded:,}")
-        table.add_row("estimated cost", f"${stats.est_cost_usd:.4f}")
+        table.add_row("estimated cost", _cost_cell(stats))
         if stats.errors:
             table.add_row("[red]errors[/red]", str(stats.errors))
         console.print(table)
@@ -206,9 +206,10 @@ def status(config: ConfigOption = None) -> None:
                     f"{row.chunks_upserted:,}",
                     f"{row.chunks_deleted:,}",
                     f"{row.tokens_embedded:,}",
-                    f"${row.est_cost_usd:.4f}",
+                    row.cost_display,
                 )
             console.print(runs)
+            _print_spend(ctx)
         finally:
             await ctx.close()
 
@@ -483,6 +484,40 @@ def serve(config: ConfigOption = None) -> None:
         build_mcp_server(build_query_service(ctx)).run()
     finally:
         asyncio.run(ctx.close())
+
+
+def _cost_cell(stats: RunStats) -> str:
+    """`$0.0000` used to mean both "free" and "we have no idea"."""
+    if stats.unpriced_requests:
+        return (
+            f"[yellow]unpriced[/yellow] ({stats.unpriced_requests} requests; "
+            "set EMBEDDING_PRICE_PER_MTOK)"
+        )
+    if stats.cost_is_estimate:
+        return f"~${stats.est_cost_usd:.4f} [dim](configured rate)[/dim]"
+    return f"${stats.est_cost_usd:.4f}"
+
+
+def _print_spend(ctx: AppContext) -> None:
+    """Cumulative tokens, and the free allowance they have drawn down.
+
+    Labelled as what it is. This counts what *this manifest* embedded, while
+    the allowance belongs to the account and is spent by everything using the
+    key -- so it is a floor on usage, never an authority.
+    """
+    total = ctx.manifest.total_tokens_embedded()
+    if not total:
+        return
+    allowance = ctx.settings.embedding_free_tier_tokens
+    if not allowance:
+        console.print(f"[dim]{total:,} tokens embedded by this manifest.[/dim]")
+        return
+    used = min(total, allowance)
+    console.print(
+        f"[dim]{total:,} tokens embedded by this manifest — "
+        f"{used / allowance:.1%} of a {allowance:,} free allowance. "
+        "Counts this index only; the allowance is per account.[/dim]"
+    )
 
 
 def _preview(text: str, lines: int = 6) -> str:

@@ -19,9 +19,27 @@ class RunRecord(BaseModel):
     chunks_deleted: int = 0
     tokens_embedded: int = 0
     est_cost_usd: float = 0.0
+    unpriced_requests: int = 0
+    cost_is_estimate: bool = False
     errors: int = 0
     config_hash: str | None = None
 
     @property
     def unfinished(self) -> bool:
         return self.finished_at is None
+
+    @property
+    def cost_display(self) -> str:
+        """Three states, told apart.
+
+        `$0.0000` used to mean both "this run was free" and "nobody told us
+        what it cost", which is the wrong answer in the more expensive
+        direction. Rows written before this column existed default to
+        unpriced=0, so they render as costs -- accurate for a local model,
+        optimistic for the API runs that predate the fix.
+        """
+        if self.unpriced_requests:
+            return f"unpriced ({self.unpriced_requests})"
+        if self.cost_is_estimate:
+            return f"~${self.est_cost_usd:.4f}"
+        return f"${self.est_cost_usd:.4f}"
