@@ -17,7 +17,7 @@ from fnmatch import fnmatch
 from workspace_indexer.discovery.file_candidate import FileCandidate
 from workspace_indexer.models import FileKind, SourceFile, sha256_text
 from workspace_indexer.obs.logging import get_logger
-from workspace_indexer.secrets import scan
+from workspace_indexer.secrets import SecretWithheldError, scan
 
 log = get_logger("workspace_indexer.chunking.reader")
 
@@ -76,7 +76,7 @@ def read_source(
                 findings=[str(f) for f in findings],
                 detail="file not indexed; its contents would be sent to the embedding provider",
             )
-            return None
+            raise SecretWithheldError(candidate.rel_path, findings)
 
     return SourceFile(
         root_label=candidate.root_label,

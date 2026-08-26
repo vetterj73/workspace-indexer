@@ -68,12 +68,28 @@ def shannon_entropy(value: str) -> float:
     return -sum((n / total) * math.log2(n / total) for n in counts.values())
 
 
+# Code referring to a credential rather than the credential itself, as in
+# `api_key=settings.qdrant_api_key`. Found by this scanner withholding one of
+# our own source files.
+#
+# Identifier *validity* is the wrong test -- a generated secret like
+# k7Fq2mZx9RtVwLpA3nBcYdQe is a valid identifier too. What separates them is
+# naming convention: references are dotted, or consistently snake_case or
+# SCREAMING_CASE. A generated value interleaves case and digits with no word
+# structure at all.
+_ATTRIBUTE = re.compile(r"\A[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+\Z")
+_CONVENTIONAL_NAME = re.compile(r"\A(?:[a-z_][a-z0-9_]*|[A-Z_][A-Z0-9_]*)\Z")
+
+
 def _looks_generated(value: str) -> bool:
     lowered = value.strip().lower()
     if lowered in _PLACEHOLDERS or lowered.startswith("<") or lowered.startswith("${"):
         return False
     # A path, a URL or a dotted module name is structured, not random.
     if "/" in value or value.count(".") > 2:
+        return False
+    bare = value.strip()
+    if _ATTRIBUTE.match(bare) or _CONVENTIONAL_NAME.match(bare):
         return False
     return shannon_entropy(value) >= _ENTROPY_THRESHOLD
 

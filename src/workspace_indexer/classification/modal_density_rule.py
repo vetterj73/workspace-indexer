@@ -14,8 +14,7 @@ from __future__ import annotations
 import re
 
 from workspace_indexer.classification.classification import Classification
-from workspace_indexer.classification.document_type import DocumentType
-from workspace_indexer.models import FileKind, SourceFile
+from workspace_indexer.models import DocumentType, FileKind, SourceFile
 
 # Uppercase forms are the strong signal: RFC 2119 capitalises deliberately, and
 # an author writing MUST NOT is making a rule rather than a remark.

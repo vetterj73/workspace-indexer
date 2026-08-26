@@ -10,8 +10,7 @@ from __future__ import annotations
 from fnmatch import fnmatch
 
 from workspace_indexer.classification.classification import Classification
-from workspace_indexer.classification.document_type import DocumentType
-from workspace_indexer.models import SourceFile
+from workspace_indexer.models import DocumentType, SourceFile
 
 # (glob, type, confidence, why). Consulted in order; first match wins, so more
 # specific patterns come first.

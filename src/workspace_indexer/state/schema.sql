@@ -21,6 +21,13 @@ CREATE TABLE IF NOT EXISTS files (
     language        TEXT,
     chunker         TEXT,
     chunker_version INTEGER NOT NULL DEFAULT 0,
+    -- What role this document plays, cached against the content hash above so
+    -- unchanged bytes are never reclassified. classifier_version invalidates
+    -- precisely the files a rule change should affect.
+    doc_type        TEXT    NOT NULL DEFAULT 'unknown',
+    doc_confidence  REAL    NOT NULL DEFAULT 0.0,
+    doc_reason      TEXT    NOT NULL DEFAULT '',
+    classifier_version INTEGER NOT NULL DEFAULT 0,
     indexed_at      TEXT    NOT NULL,
     PRIMARY KEY (root_label, rel_path)
 );

@@ -142,7 +142,9 @@ def test_indexed_at_is_iso_utc() -> None:
 def test_every_filterable_field_has_an_index() -> None:
     """A filter on an unindexed field makes Qdrant scan, which looks like a
     vector performance problem but is not."""
-    filterable = set(SearchFilters.model_fields) - {"path_prefix"}
+    # path_prefix is served by `ancestors`; exclude_doc_types is an
+    # exclusion expressed against doc_type rather than a field of its own.
+    filterable = set(SearchFilters.model_fields) - {"path_prefix", "exclude_doc_types"}
     payload_keys = set(to_payload(_chunk(), SPACE))
     for field in filterable:
         assert field in payload_keys, field

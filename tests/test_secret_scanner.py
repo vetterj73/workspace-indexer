@@ -149,3 +149,16 @@ def test_finding_renders_without_a_value() -> None:
     finding = SecretFinding(rule="github_pat", line=7, description="GitHub token")
     assert "line 7" in str(finding)
     assert "github_pat" in str(finding)
+
+
+def test_code_referencing_a_credential_is_not_a_credential() -> None:
+    """`api_key=settings.qdrant_api_key` is a variable reference. This scanner
+    withheld one of our own source files for exactly this before the fix."""
+    assert scan("AsyncQdrantClient(url=settings.url, api_key=settings.qdrant_api_key)") == []
+    assert scan("token = self._config.auth_token") == []
+    assert scan("API_KEY = os.environ.get") == []
+
+
+def test_an_actual_literal_next_to_a_reference_is_still_caught() -> None:
+    """Ignoring identifiers must not become a way to hide a real value."""
+    assert scan('client(api_key=settings.key, secret="k7Fq2mZx9RtVwLpA3nBcYdQe")')

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from qdrant_client import models
 
-from workspace_indexer.models import FileKind, SearchFilters
+from workspace_indexer.models import DocumentType, FileKind, SearchFilters
 from workspace_indexer.storage.qdrant_store import build_filter
 
 
@@ -96,3 +96,51 @@ def test_all_filter_fields_are_honoured() -> None:
 def test_is_empty_reflects_only_set_fields() -> None:
     assert SearchFilters().is_empty()
     assert not SearchFilters(language="python").is_empty()
+
+
+def test_doc_type_filter() -> None:
+    """What separates a specification from a changelog in the same directory."""
+    condition = build_filter(SearchFilters(doc_type=DocumentType.NORMATIVE))
+    assert condition is not None
+    assert _value_for(condition, "doc_type") == "normative"
+
+
+def test_exclusions_use_must_not() -> None:
+    """A caller saying "not tests" should not have to enumerate every type it
+    does want, and a type added to the taxonomy later is then included by
+    default rather than silently dropped."""
+    condition = build_filter(
+        SearchFilters(exclude_doc_types=[DocumentType.TEST, DocumentType.GENERATED])
+    )
+    assert condition is not None
+    excluded = {
+        getattr(c.match, "value", None)
+        for c in (condition.must_not or [])
+        if isinstance(c, models.FieldCondition)
+    }
+    assert excluded == {"test", "generated"}
+
+
+def test_exclusions_compose_with_other_filters() -> None:
+    """An early return here silently dropped the path filter, which is the
+    class of bug that returns the wrong results without erroring."""
+    condition = build_filter(
+        SearchFilters(path_prefix="src/pkg", exclude_doc_types=[DocumentType.TEST])
+    )
+    assert condition is not None
+    assert _keys(condition) == {"ancestors"}
+    assert condition.must_not
+
+
+def test_exclusions_alone_still_build_a_filter() -> None:
+    condition = build_filter(SearchFilters(exclude_doc_types=[DocumentType.TEST]))
+    assert condition is not None
+    assert not condition.must
+    assert condition.must_not
+
+
+def test_default_filters_are_still_empty() -> None:
+    """An empty exclusion list constrains nothing, and must not be mistaken for
+    a constraint -- otherwise every unfiltered search builds a filter."""
+    assert SearchFilters().is_empty()
+    assert build_filter(SearchFilters()) is None

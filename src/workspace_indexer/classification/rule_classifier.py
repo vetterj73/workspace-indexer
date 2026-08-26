@@ -8,12 +8,11 @@ argument for rules ahead of inference.
 from __future__ import annotations
 
 from workspace_indexer.classification.classification import Classification
-from workspace_indexer.classification.document_type import DocumentType
 from workspace_indexer.classification.frontmatter_rule import FrontmatterRule
 from workspace_indexer.classification.modal_density_rule import ModalDensityRule
 from workspace_indexer.classification.path_rule import PathRule
 from workspace_indexer.classification.rule import Rule
-from workspace_indexer.models import FileKind, SourceFile
+from workspace_indexer.models import DocumentType, FileKind, SourceFile
 from workspace_indexer.obs.logging import get_logger
 
 log = get_logger("workspace_indexer.classification")
@@ -28,6 +27,7 @@ _BY_KIND: dict[FileKind, DocumentType] = {
 
 class RuleClassifier:
     name = "rules"
+    version = 1
 
     def __init__(self, rules: list[Rule] | None = None) -> None:
         # Order encodes precedence: an explicit declaration beats location,

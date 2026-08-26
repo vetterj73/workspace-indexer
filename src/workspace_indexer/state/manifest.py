@@ -18,8 +18,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
 
+from workspace_indexer.classification import Classification
 from workspace_indexer.discovery.file_candidate import FileCandidate
-from workspace_indexer.models import Chunk, RunStats, SourceFile
+from workspace_indexer.models import Chunk, DocumentType, RunStats, SourceFile
 from workspace_indexer.obs.logging import get_logger
 from workspace_indexer.state.chunk_delta import ChunkDelta
 from workspace_indexer.state.file_record import FileRecord
@@ -44,6 +45,30 @@ class Manifest:
         # WAL so a reader (an MCP server) is not blocked by the indexer's
         # writes. Without it SQLite takes a global write lock.
         self._db.executescript(_SCHEMA.read_text(encoding="utf-8"))
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Add columns that a database created by an older version lacks.
+
+        CREATE TABLE IF NOT EXISTS silently does nothing to an existing table,
+        so a schema change would otherwise surface as a query error against a
+        live index rather than at startup. Rebuilding is not an acceptable
+        answer when a full index costs real time and money.
+        """
+        existing = {
+            str(row["name"])
+            for row in self._db.execute("PRAGMA table_info(files)")
+        }
+        additions = {
+            "doc_type": "TEXT NOT NULL DEFAULT 'unknown'",
+            "doc_confidence": "REAL NOT NULL DEFAULT 0.0",
+            "doc_reason": "TEXT NOT NULL DEFAULT ''",
+            "classifier_version": "INTEGER NOT NULL DEFAULT 0",
+        }
+        for column, definition in additions.items():
+            if column not in existing:
+                self._db.execute(f"ALTER TABLE files ADD COLUMN {column} {definition}")
+                log.info("state.migrated", table="files", column=column)
 
     def __enter__(self) -> Manifest:
         return self
@@ -122,16 +147,57 @@ class Manifest:
 
     # ---- recording -----------------------------------------------------
 
-    def record_file(self, source: SourceFile, *, chunker: str, chunker_version: int) -> None:
+    def cached_classification(
+        self, source: SourceFile, classifier_version: int
+    ) -> Classification | None:
+        """A previous verdict for these exact bytes, or None.
+
+        Keyed on the content hash rather than the path, so a file that moved is
+        not reclassified and one that changed always is. This is what keeps a
+        future model-based rung from re-reading the whole workspace on every
+        run.
+        """
+        row = self._db.execute(
+            "SELECT sha256, doc_type, doc_confidence, doc_reason, classifier_version "
+            "FROM files WHERE root_label = ? AND rel_path = ?",
+            (source.root_label, source.rel_path),
+        ).fetchone()
+        if row is None:
+            return None
+        if row["sha256"] != source.sha256:
+            return None
+        if row["classifier_version"] != classifier_version:
+            # The rules changed, so the stored verdict is from a ruleset we no
+            # longer trust.
+            return None
+        return Classification(
+            doc_type=DocumentType(row["doc_type"]),
+            confidence=float(row["doc_confidence"]),
+            reason=str(row["doc_reason"]),
+        )
+
+    def record_file(
+        self,
+        source: SourceFile,
+        *,
+        chunker: str,
+        chunker_version: int,
+        classification: Classification | None = None,
+        classifier_version: int = 0,
+    ) -> None:
         self._db.execute(
             "INSERT INTO files (root_label, rel_path, abs_path, mtime_ns, size, sha256, "
-            "kind, language, chunker, chunker_version, indexed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "kind, language, chunker, chunker_version, doc_type, doc_confidence, "
+            "doc_reason, classifier_version, indexed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT (root_label, rel_path) DO UPDATE SET "
             "abs_path = excluded.abs_path, mtime_ns = excluded.mtime_ns, "
             "size = excluded.size, sha256 = excluded.sha256, kind = excluded.kind, "
             "language = excluded.language, chunker = excluded.chunker, "
-            "chunker_version = excluded.chunker_version, indexed_at = excluded.indexed_at",
+            "chunker_version = excluded.chunker_version, doc_type = excluded.doc_type, "
+            "doc_confidence = excluded.doc_confidence, doc_reason = excluded.doc_reason, "
+            "classifier_version = excluded.classifier_version, "
+            "indexed_at = excluded.indexed_at",
             (
                 source.root_label,
                 source.rel_path,
@@ -143,6 +209,10 @@ class Manifest:
                 source.language,
                 chunker,
                 chunker_version,
+                (classification.doc_type if classification else DocumentType.UNKNOWN).value,
+                classification.confidence if classification else 0.0,
+                classification.reason if classification else "",
+                classifier_version,
                 _now(),
             ),
         )

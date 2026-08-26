@@ -13,7 +13,13 @@ from typing import Any
 
 from qdrant_client import models
 
-from workspace_indexer.models import Chunk, EmbeddingSpace, FileKind, SearchHit
+from workspace_indexer.models import (
+    Chunk,
+    DocumentType,
+    EmbeddingSpace,
+    FileKind,
+    SearchHit,
+)
 
 # Fields that get an explicit payload index. Without one Qdrant filters by
 # scanning, and filtered search over a large index gets slow in a way that looks
@@ -29,6 +35,7 @@ INDEXED_FIELDS: dict[str, models.PayloadSchemaType] = {
     "repo_name": models.PayloadSchemaType.KEYWORD,
     "repo_branch": models.PayloadSchemaType.KEYWORD,
     "symbol_kind": models.PayloadSchemaType.KEYWORD,
+    "doc_type": models.PayloadSchemaType.KEYWORD,
     "content_sha": models.PayloadSchemaType.KEYWORD,
 }
 
@@ -81,6 +88,9 @@ def to_payload(chunk: Chunk, space: EmbeddingSpace) -> dict[str, Any]:
         "chunk_total": meta.chunk_total,
         "chunker": meta.chunker,
         "chunker_version": meta.chunker_version,
+        "doc_type": meta.doc_type.value,
+        "doc_confidence": meta.doc_type_confidence,
+        "classifier_version": meta.classifier_version,
         "parse_degraded": meta.parse_degraded,
         "space_slug": space.slug(),
         "indexed_at": datetime.now(UTC).isoformat(),
@@ -110,6 +120,8 @@ def to_search_hit(point_id: str, score: float, payload: dict[str, Any]) -> Searc
         language=_optional_str(payload.get("language")),
         symbol_path=_optional_str(payload.get("symbol_path")),
         symbol_name=_optional_str(payload.get("symbol_name")),
+        doc_type=DocumentType(payload.get("doc_type") or "unknown"),
+        doc_confidence=float(payload.get("doc_confidence") or 0.0),
         start_line=int(payload.get("start_line") or 1),
         end_line=int(payload.get("end_line") or 1),
         source_text=source_text,

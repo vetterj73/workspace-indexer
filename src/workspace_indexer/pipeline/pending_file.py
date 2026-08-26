@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
+from workspace_indexer.classification import Classification
 from workspace_indexer.models import Chunk, SourceFile
 from workspace_indexer.state import ChunkDelta
 
@@ -21,6 +22,7 @@ class PendingFile(BaseModel):
     chunker_version: int
     chunks: list[Chunk]
     delta: ChunkDelta
+    classification: Classification | None = None
 
     @property
     def to_embed(self) -> list[Chunk]:

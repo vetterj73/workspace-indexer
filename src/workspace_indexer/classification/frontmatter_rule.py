@@ -13,8 +13,7 @@ from typing import Any, cast
 import yaml
 
 from workspace_indexer.classification.classification import Classification
-from workspace_indexer.classification.document_type import DocumentType
-from workspace_indexer.models import SourceFile
+from workspace_indexer.models import DocumentType, SourceFile
 
 _FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*(\n|\Z)", re.DOTALL)
 

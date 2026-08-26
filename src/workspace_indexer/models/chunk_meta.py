@@ -6,6 +6,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from workspace_indexer.models.document_type import DocumentType
 from workspace_indexer.models.file_kind import FileKind
 from workspace_indexer.models.repo_info import RepoInfo
 
@@ -32,6 +33,11 @@ class ChunkMeta(BaseModel):
     token_estimate: int = 0
     chunker: str = ""
     chunker_version: int = 1
+    # What role this document plays, as distinct from how it was chunked.
+    # One classification per file; every chunk of it inherits the verdict.
+    doc_type: DocumentType = DocumentType.UNKNOWN
+    doc_type_confidence: float = 0.0
+    classifier_version: int = 0
     # True when tree-sitter hit error nodes or no grammar was available, so a
     # quality problem is visible in the payload rather than only in the log.
     parse_degraded: bool = False

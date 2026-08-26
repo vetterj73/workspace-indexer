@@ -80,6 +80,7 @@ class AppContext:
             sparse=self.sparse,
             store=self.store,
             space=self.space,
+            classifier=self.classifier,
         )
 
     def search_service(self, space: EmbeddingSpace | None = None) -> SearchService:

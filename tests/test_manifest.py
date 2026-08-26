@@ -15,8 +15,9 @@ import pytest
 
 from tests.conftest import make_source
 from workspace_indexer.chunking.chunk_factory import build_chunk
+from workspace_indexer.classification import Classification
 from workspace_indexer.discovery.file_candidate import FileCandidate
-from workspace_indexer.models import Chunk, FileKind, RunStats, SourceFile
+from workspace_indexer.models import Chunk, DocumentType, FileKind, RunStats, SourceFile
 from workspace_indexer.state.index_decision import IndexDecision
 from workspace_indexer.state.manifest import Manifest
 
@@ -575,3 +576,112 @@ def test_copying_an_untracked_space_copies_nothing(manifest: Manifest) -> None:
     cannot be either, and the derived collection would be invisible to orphan
     cleanup."""
     assert manifest.copy_space("never-existed", OTHER_SPACE) == 0
+
+
+# ---- classification caching -------------------------------------------
+
+
+def _verdict(doc_type: DocumentType = DocumentType.NORMATIVE) -> Classification:
+    return Classification(doc_type=doc_type, confidence=0.9, reason="path: under adr/")
+
+
+def test_classification_round_trips(manifest: Manifest) -> None:
+    source = _source()
+    manifest.record_file(
+        source, chunker="text", chunker_version=VERSION,
+        classification=_verdict(), classifier_version=1,
+    )
+    cached = manifest.cached_classification(source, classifier_version=1)
+    assert cached is not None
+    assert cached.doc_type is DocumentType.NORMATIVE
+    assert cached.confidence == pytest.approx(0.9)
+    assert cached.reason == "path: under adr/"
+
+
+def test_changed_content_invalidates_the_cached_verdict(manifest: Manifest) -> None:
+    """Keyed on the content hash: a file whose bytes changed must be
+    reclassified, since its type may well have changed with them."""
+    source = _source(text="original")
+    manifest.record_file(
+        source, chunker="text", chunker_version=VERSION,
+        classification=_verdict(), classifier_version=1,
+    )
+    edited = _source(text="completely different content")
+    assert manifest.cached_classification(edited, classifier_version=1) is None
+
+
+def test_a_moved_file_is_not_reclassified(manifest: Manifest) -> None:
+    """The cache is per path *and* hash, so a rename looks new -- which is
+    correct, because path is itself a classification signal."""
+    source = _source("src/a.py")
+    manifest.record_file(
+        source, chunker="text", chunker_version=VERSION,
+        classification=_verdict(), classifier_version=1,
+    )
+    assert manifest.cached_classification(_source("src/b.py"), 1) is None
+
+
+def test_bumping_the_classifier_version_invalidates(manifest: Manifest) -> None:
+    """The rules changed, so a stored verdict comes from a ruleset we no
+    longer trust."""
+    source = _source()
+    manifest.record_file(
+        source, chunker="text", chunker_version=VERSION,
+        classification=_verdict(), classifier_version=1,
+    )
+    assert manifest.cached_classification(source, classifier_version=1) is not None
+    assert manifest.cached_classification(source, classifier_version=2) is None
+
+
+def test_unknown_file_has_no_cached_verdict(manifest: Manifest) -> None:
+    assert manifest.cached_classification(_source("never/seen.py"), 1) is None
+
+
+def test_recording_without_a_classification_is_allowed(manifest: Manifest) -> None:
+    """Older rows and the no-classifier path both land here."""
+    source = _source()
+    manifest.record_file(source, chunker="text", chunker_version=VERSION)
+    cached = manifest.cached_classification(source, classifier_version=0)
+    assert cached is not None
+    assert cached.doc_type is DocumentType.UNKNOWN
+
+
+def test_migration_adds_columns_to_an_older_database(tmp_path: Path) -> None:
+    """A schema change must not force a rebuild. A full index costs real time
+    and money, so an existing database has to be upgraded in place."""
+    import sqlite3
+
+    path = tmp_path / "old.sqlite3"
+    legacy = sqlite3.connect(path)
+    legacy.executescript(
+        """
+        CREATE TABLE files (
+            root_label TEXT NOT NULL, rel_path TEXT NOT NULL, abs_path TEXT NOT NULL,
+            mtime_ns INTEGER NOT NULL, size INTEGER NOT NULL, sha256 TEXT NOT NULL,
+            kind TEXT NOT NULL, language TEXT, chunker TEXT,
+            chunker_version INTEGER NOT NULL DEFAULT 0, indexed_at TEXT NOT NULL,
+            PRIMARY KEY (root_label, rel_path));
+        INSERT INTO files VALUES
+            ('r', 'a.py', '/a.py', 1, 1, 'abc', 'code', 'python', 'code', 1, 'then');
+        """
+    )
+    legacy.commit()
+    legacy.close()
+
+    with Manifest(path) as m:
+        assert m.file_count() == 1
+        record = m.get_file("r", "a.py")
+        assert record is not None
+        assert record.sha256 == "abc"
+
+    columns = {
+        r[1] for r in sqlite3.connect(path).execute("PRAGMA table_info(files)")
+    }
+    assert {"doc_type", "doc_confidence", "doc_reason", "classifier_version"} <= columns
+
+
+def test_migration_is_idempotent(tmp_path: Path) -> None:
+    path = tmp_path / "m.sqlite3"
+    for _ in range(3):
+        with Manifest(path) as m:
+            m.file_count()
