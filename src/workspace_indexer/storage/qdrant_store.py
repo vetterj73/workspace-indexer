@@ -192,9 +192,7 @@ class QdrantStore:
         )
         log.info("store.delete", collection=name, count=len(chunk_ids), by="ids")
 
-    async def delete_by_path(
-        self, space: EmbeddingSpace, root_label: str, rel_path: str
-    ) -> None:
+    async def delete_by_path(self, space: EmbeddingSpace, root_label: str, rel_path: str) -> None:
         """Deleting by path rather than by id is what makes file deletion and
         rename correct without first consulting the manifest."""
         name = self.collection_name(space)
@@ -311,12 +309,134 @@ class QdrantStore:
         sparse_names = sorted(sparse) if isinstance(sparse, dict) else []
         return {"dense": dense_names, "sparse": sparse_names}
 
-    async def count(self, space: EmbeddingSpace) -> int:
+    async def count(self, space: EmbeddingSpace, filters: SearchFilters | None = None) -> int:
         name = self.collection_name(space)
         if not await self._client.collection_exists(name):
             return 0
-        result = await self._client.count(collection_name=name, exact=True)
+        result = await self._client.count(
+            collection_name=name, count_filter=build_filter(filters), exact=True
+        )
         return result.count
+
+    async def facet(self, space: EmbeddingSpace, key: str, limit: int = 32) -> dict[str, int]:
+        """How many chunks carry each value of one payload field.
+
+        One round trip for the whole distribution, rather than a count call per
+        value. Values absent from the collection are absent from the result --
+        the caller decides whether a missing key means zero or means unknown,
+        because for the taxonomy those are very different answers.
+        """
+        name = self.collection_name(space)
+        if not await self._client.collection_exists(name):
+            return {}
+        response = await self._client.facet(collection_name=name, key=key, limit=limit, exact=True)
+        return {str(hit.value): hit.count for hit in response.hits}
+
+    async def sample_paths(
+        self, space: EmbeddingSpace, filters: SearchFilters | None = None, limit: int = 3
+    ) -> list[str]:
+        """A few distinct file paths matching a filter.
+
+        For the taxonomy: a real path from this workspace calibrates a model
+        far better than any prose definition of a category. Scrolls in pages
+        because chunks cluster by file -- the first page can easily be twenty
+        chunks of one document.
+        """
+        name = self.collection_name(space)
+        if not await self._client.collection_exists(name):
+            return []
+        condition = build_filter(filters)
+        found: list[str] = []
+        offset: Any = None
+        while len(found) < limit:
+            points, offset = await self._client.scroll(
+                collection_name=name,
+                scroll_filter=condition,
+                limit=64,
+                offset=offset,
+                with_payload=["rel_path"],
+                with_vectors=False,
+            )
+            for point in points:
+                path = str((point.payload or {}).get("rel_path", ""))
+                if path and path not in found:
+                    found.append(path)
+                    if len(found) == limit:
+                        break
+            if offset is None:
+                break
+        return found
+
+    async def chunks_for_path(
+        self, space: EmbeddingSpace, rel_path: str, limit: int = 50
+    ) -> list[SearchHit]:
+        """Every indexed chunk of one file.
+
+        Exact match first, because the caller almost always got `rel_path` from
+        a search result and it is the payload value verbatim. A model that
+        typed the path itself tends to give a suffix -- `state/manifest.py`
+        for `workspace-indexer/src/.../state/manifest.py` -- so a miss falls
+        back to scanning the path column and matching on a segment boundary.
+        That scan reads one small keyword field, never a vector or a body, and
+        the alternative is telling an agent its own file does not exist.
+        """
+        name = self.collection_name(space)
+        if not await self._client.collection_exists(name):
+            return []
+
+        wanted = rel_path.strip("/")
+        points, _ = await self._client.scroll(
+            collection_name=name,
+            scroll_filter=models.Filter(
+                must=[models.FieldCondition(key="rel_path", match=models.MatchValue(value=wanted))]
+            ),
+            limit=limit,
+            with_payload=True,
+            with_vectors=False,
+        )
+        if points:
+            return [to_search_hit(str(p.id), 0.0, dict(p.payload or {})) for p in points]
+
+        matched = await self._paths_ending_with(name, wanted)
+        if not matched:
+            return []
+        points, _ = await self._client.scroll(
+            collection_name=name,
+            scroll_filter=models.Filter(
+                must=[models.FieldCondition(key="rel_path", match=models.MatchAny(any=matched))]
+            ),
+            limit=limit,
+            with_payload=True,
+            with_vectors=False,
+        )
+        return [to_search_hit(str(p.id), 0.0, dict(p.payload or {})) for p in points]
+
+    async def _paths_ending_with(self, name: str, suffix: str, max_pages: int = 40) -> list[str]:
+        """Distinct rel_paths ending at a segment boundary of `suffix`.
+
+        Bounded so a pathological collection cannot turn one tool call into an
+        unbounded scan; `max_pages` of 4096 covers a workspace far larger than
+        anything this is pointed at, and stopping early only costs a fallback,
+        never a wrong answer.
+        """
+        needle = "/" + suffix
+        found: set[str] = set()
+        offset: Any = None
+        for _ in range(max_pages):
+            points, offset = await self._client.scroll(
+                collection_name=name,
+                limit=4096,
+                offset=offset,
+                with_payload=["rel_path"],
+                with_vectors=False,
+            )
+            for point in points:
+                path = str((point.payload or {}).get("rel_path", ""))
+                if path.endswith(needle):
+                    found.add(path)
+            if offset is None:
+                break
+        return sorted(found)
 
     async def collection_names(self) -> list[str]:
         response = await self._client.get_collections()
@@ -387,11 +507,20 @@ def build_filter(filters: SearchFilters | None) -> models.Filter | None:
         for key, value in exact.items()
         if value is not None
     ]
+    if filters.doc_types:
+        # MatchAny rather than several MatchValue conditions: `must` is an AND,
+        # so one condition per type would ask for a chunk that is somehow both
+        # normative and design, and match nothing at all.
+        must.append(
+            models.FieldCondition(
+                key="doc_type",
+                match=models.MatchAny(any=[t.value for t in filters.doc_types]),
+            )
+        )
+
     if filters.path_prefix:
         prefix = filters.path_prefix.strip("/")
-        must.append(
-            models.FieldCondition(key="ancestors", match=models.MatchValue(value=prefix))
-        )
+        must.append(models.FieldCondition(key="ancestors", match=models.MatchValue(value=prefix)))
 
     # must_not rather than a positive list: a caller saying "not tests" should
     # not have to enumerate every type it does want, and a type added to the

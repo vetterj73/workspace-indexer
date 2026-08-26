@@ -26,6 +26,8 @@ dependencies = [
     "tree-sitter-language-pack>=1.15",
     # discovery
     "pathspec>=1.1",
+    # how an agent reaches the index mid-session
+    "mcp>=2.1",
     # cli + logging
     "typer>=0.27",
     "structlog>=26.1",

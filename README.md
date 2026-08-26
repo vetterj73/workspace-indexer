@@ -45,9 +45,79 @@ workspace-indexer status              # what is indexed, in which spaces, what r
 workspace-indexer explain path/to/file.py   # the chunks one file produces
 workspace-indexer reproject -d 1024   # narrower collection, no re-embedding
 workspace-indexer eval                # recall@k and MRR@k against config/eval.yaml
+workspace-indexer serve               # MCP server over stdio, for an agent
 ```
 
 `--dry-run` exists so chunking can be tuned without paying to iterate.
+
+`eval` can score an MCP tool rather than the raw search path, which is the only
+way to measure what a document-type filter is actually worth:
+
+```bash
+workspace-indexer eval --group guidance --tool search          # baseline
+workspace-indexer eval --group guidance --tool find_guidance   # with the filter
+```
+
+## Using it from Claude Code
+
+`serve` speaks MCP over stdio: the client starts the process and talks to it
+down a pipe, so there is no port and nothing left running. Register it once —
+in `.mcp.json` at a project root, or with `claude mcp add`:
+
+```json
+{
+  "mcpServers": {
+    "workspace-indexer": {
+      "command": "/absolute/path/to/workspace-indexer/.venv/bin/workspace-indexer",
+      "args": ["serve", "--config", "/absolute/path/to/workspace-indexer/config/workspace.yaml"],
+      "env": {
+        "QDRANT_MODE": "server",
+        "QDRANT_URL": "http://127.0.0.1:6333",
+        "EMBEDDING_MODEL": "voyageai:voyage-code-4",
+        "EMBEDDING_DIMENSIONS": "1024",
+        "VOYAGE_API_KEY": "..."
+      }
+    }
+  }
+}
+```
+
+Everything absolute, and the environment set explicitly, for one reason: **the
+client launches this from its own working directory, not from the repository.**
+A relative config path is not found, `.env` is not read, and the defaults then
+resolve to an embedded Qdrant at a `data/qdrant` that does not exist. That used
+to start up perfectly and serve an empty index — every query answering "nothing
+found", which an agent believes. `serve` now checks the collection at startup
+and refuses to run rather than serve nothing:
+
+```
+the collection for voyageai_voyage-code-4_2048 is empty (embedded qdrant at
+/some/other/cwd/data/qdrant), so every query would return nothing.
+```
+
+Four tools, and the split between the first two is the point — an agent already
+knows its intent, and declaring it is far more reliable than inferring it from
+the query text:
+
+| tool | what it searches |
+|---|---|
+| `search_code` | implementation and docs; tests and generated files excluded |
+| `find_guidance` | specs, design documents and guides only |
+| `get_file_context` | every indexed chunk of one file, in order |
+| `list_document_types` | what kinds of document this workspace holds, with counts |
+
+The same taxonomy is also served as a resource at `workspace-indexer://taxonomy`.
+Both surfaces exist because clients differ in how reliably a model sees a
+resource that the user has not attached, whereas a tool is always in context.
+
+A count of zero in `list_document_types` is a real answer, not a gap: if
+`normative` is 0, this workspace has no written standards and an agent should
+read the implementation rather than keep hunting for specs.
+
+**Note:** the server holds the index open for as long as the session lasts, so
+Qdrant must be in server mode (`QDRANT_MODE=server`). Embedded Qdrant takes an
+exclusive lock on its storage directory, and indexing from another terminal
+would fail for as long as the agent is connected.
 
 ## Development
 

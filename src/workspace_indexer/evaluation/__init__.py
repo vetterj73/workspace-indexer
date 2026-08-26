@@ -14,6 +14,9 @@ from workspace_indexer.evaluation.eval_store import (
     write_record,
 )
 from workspace_indexer.evaluation.report_writer import render, write_report
+from workspace_indexer.evaluation.retriever import Retriever
+from workspace_indexer.evaluation.search_retriever import SearchRetriever
+from workspace_indexer.evaluation.tool_retriever import ToolRetriever
 
 __all__ = [
     "DEFAULT_EVAL_DIR",
@@ -22,6 +25,9 @@ __all__ = [
     "EvalCase",
     "EvalComparison",
     "EvalHarness",
+    "Retriever",
+    "SearchRetriever",
+    "ToolRetriever",
     "EvalRecord",
     "EvalReport",
     "EvalResult",

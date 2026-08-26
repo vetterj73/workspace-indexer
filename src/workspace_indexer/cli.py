@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, cast
 
 import typer
 from rich.console import Console
@@ -17,6 +17,9 @@ from workspace_indexer.evaluation import (
     EvalComparison,
     EvalHarness,
     EvalRecord,
+    Retriever,
+    SearchRetriever,
+    ToolRetriever,
     compare,
     latest_comparable,
     load_cases,
@@ -24,7 +27,9 @@ from workspace_indexer.evaluation import (
     write_record,
     write_report,
 )
-from workspace_indexer.models import FileKind, SearchFilters
+from workspace_indexer.evaluation.search_retriever import Fusion
+from workspace_indexer.mcp import QueryService, TaxonomyService
+from workspace_indexer.models import EmbeddingSpace, FileKind, SearchFilters
 from workspace_indexer.search import Reprojector, SearchRequest
 
 app = typer.Typer(
@@ -34,9 +39,7 @@ app = typer.Typer(
 )
 console = Console()
 
-ConfigOption = Annotated[
-    Path | None, typer.Option("--config", "-c", help="Path to workspace.yaml")
-]
+ConfigOption = Annotated[Path | None, typer.Option("--config", "-c", help="Path to workspace.yaml")]
 
 
 def _context(config: Path | None) -> AppContext:
@@ -55,9 +58,7 @@ def index(
     dry_run: Annotated[
         bool, typer.Option("--dry-run", help="Show the chunk plan and token estimate, no API calls")
     ] = False,
-    force: Annotated[
-        bool, typer.Option("--force", help="Ignore mtime and hash shortcuts")
-    ] = False,
+    force: Annotated[bool, typer.Option("--force", help="Ignore mtime and hash shortcuts")] = False,
 ) -> None:
     """Index the configured roots, reusing everything unchanged."""
 
@@ -278,9 +279,7 @@ def reproject(
     async def run() -> None:
         ctx = _context(config)
         try:
-            target = await Reprojector(ctx.store, ctx.manifest).reproject(
-                ctx.space, dimensions
-            )
+            target = await Reprojector(ctx.store, ctx.manifest).reproject(ctx.space, dimensions)
             console.print(
                 f"Wrote [cyan]{ctx.store.collection_name(target)}[/cyan] "
                 f"({await ctx.store.count(target):,} points) from "
@@ -309,13 +308,30 @@ def evaluate(
     compare_previous: Annotated[
         bool, typer.Option("--compare/--no-compare", help="Diff against the last comparable run")
     ] = True,
+    tool: Annotated[
+        str,
+        typer.Option("--tool", help="Retrieval surface: search | search_code | find_guidance"),
+    ] = "search",
+    group: Annotated[
+        str, typer.Option("--group", help="Case group: all | retrieval | guidance")
+    ] = "all",
 ) -> None:
-    """Score retrieval quality against a dataset of query/expected-file pairs."""
+    """Score retrieval quality against a dataset of query/expected-file pairs.
+
+    `--tool` scores an MCP tool rather than the raw search path, which is the
+    only way to measure what a document-type filter is actually worth: an agent
+    calls find_guidance, not SearchService, and the filter is the hypothesis.
+    """
 
     async def run() -> None:
         ctx = _context(config)
         try:
             cases = load_cases(dataset or ctx.config.eval.dataset)
+            if group != "all":
+                cases = [case for case in cases if case.group == group]
+                if not cases:
+                    console.print(f"[red]no cases in group {group!r}[/red]")
+                    raise typer.Exit(code=2)
             # A reprojected collection is a distinct space, so it has to be
             # addressed as one rather than by width alone.
             space = (
@@ -325,14 +341,12 @@ def evaluate(
                 if dimensions
                 else None
             )
-            label = f"{(space or ctx.space).slug()} fusion={fusion or ctx.config.search.fusion}"
-            report = await EvalHarness(ctx.search_service(space)).run(
-                cases,
-                limit=limit,
-                label=label,
-                fusion=fusion,  # type: ignore[arg-type]
-                rerank=rerank,
+            retriever = _retriever(ctx, space, tool=tool, fusion=fusion, rerank=rerank)
+            label = (
+                f"{(space or ctx.space).slug()} fusion={fusion or ctx.config.search.fusion} "
+                f"tool={retriever.name} cases={group}"
             )
+            report = await EvalHarness(retriever).run(cases, limit=limit, label=label)
             active = space or ctx.space
             record = EvalRecord(
                 recorded_at=datetime.now(UTC).isoformat(),
@@ -344,6 +358,8 @@ def evaluate(
                 fusion=fusion or ctx.config.search.fusion,
                 reranker="none" if rerank is False else ctx.config.search.rerank.model,
                 limit=limit,
+                retriever=retriever.name,
+                case_filter=group,
                 recall_at_k=report.recall_at_k,
                 mrr_at_k=report.mrr_at_k,
                 case_count=len(report.results),
@@ -386,12 +402,47 @@ def evaluate(
     asyncio.run(run())
 
 
+def _retriever(
+    ctx: AppContext,
+    space: EmbeddingSpace | None,
+    *,
+    tool: str,
+    fusion: str | None,
+    rerank: bool | None,
+) -> Retriever:
+    """Pick the surface to score.
+
+    The MCP tools are constructed over the same search service the baseline
+    uses, so a difference between them is the tool's document-type policy and
+    nothing else.
+    """
+    if tool == "search":
+        return SearchRetriever(
+            ctx.search_service(space),
+            fusion=cast("Fusion | None", fusion),
+            rerank=rerank,
+        )
+
+    queries = QueryService(
+        search=ctx.search_service(space),
+        taxonomy=TaxonomyService(ctx.store, space or ctx.space),
+    )
+    if tool == "search_code":
+        return ToolRetriever("search_code", lambda q, n: queries.search_code(q, limit=n))
+    if tool == "find_guidance":
+        return ToolRetriever("find_guidance", lambda q, n: queries.find_guidance(q, limit=n))
+
+    console.print(f"[red]unknown --tool {tool!r}: search | search_code | find_guidance[/red]")
+    raise typer.Exit(code=2)
+
+
 def _print_comparison(comparison: EvalComparison) -> None:
     """Aggregate first, then what actually moved.
 
     A run that improves the average while breaking two cases is a result worth
     seeing, and the aggregate alone hides it.
     """
+
     def arrow(delta: float) -> str:
         colour = "green" if delta > 0 else "red" if delta < 0 else "dim"
         return f"[{colour}]{delta:+.3f}[/{colour}]"
@@ -405,6 +456,33 @@ def _print_comparison(comparison: EvalComparison) -> None:
         console.print(f"  [red]worse [/red] {movement}")
     if not comparison.improved and not comparison.regressed:
         console.print("  [dim]no case changed rank[/dim]")
+
+
+@app.command()
+def serve(config: ConfigOption = None) -> None:
+    """Run the MCP server so an agent can query the index mid-session.
+
+    Speaks MCP over stdio: the client starts this process and talks to it down
+    a pipe, so there is no port and nothing left running afterwards. stdout is
+    the protocol channel and nothing else may touch it -- our console sink
+    writes to stderr, which the client collects as logs, and the rolling JSONL
+    file is unaffected either way.
+    """
+    from workspace_indexer.mcp import EmptyIndexError, build_mcp_server, build_query_service
+    from workspace_indexer.mcp.server_factory import preflight
+
+    ctx = _context(config)
+    try:
+        asyncio.run(preflight(ctx))
+    except EmptyIndexError as exc:
+        console.print(f"[red]{exc}[/red]")
+        asyncio.run(ctx.close())
+        raise typer.Exit(code=2) from exc
+
+    try:
+        build_mcp_server(build_query_service(ctx)).run()
+    finally:
+        asyncio.run(ctx.close())
 
 
 def _preview(text: str, lines: int = 6) -> str:
