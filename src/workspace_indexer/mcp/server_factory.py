@@ -52,6 +52,7 @@ def build_query_service(ctx: AppContext) -> QueryService:
     return QueryService(
         search=ctx.search_service(),
         taxonomy=TaxonomyService(ctx.store, ctx.space),
+        check_staleness=ctx.config.search.check_staleness,
     )
 
 

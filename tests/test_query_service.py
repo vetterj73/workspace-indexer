@@ -81,7 +81,9 @@ async def store(tmp_path: Path) -> AsyncIterator[QdrantStore]:
     await client.close()
 
 
-def _queries(store: QdrantStore, *, max_tokens: int = 6000) -> QueryService:
+def _queries(
+    store: QdrantStore, *, max_tokens: int = 6000, check_staleness: bool = False
+) -> QueryService:
     search = SearchService(
         store=store,
         embeddings=EmbeddingService(FakeEmbeddingBackend(dimensions=4)),
@@ -94,6 +96,9 @@ def _queries(store: QdrantStore, *, max_tokens: int = 6000) -> QueryService:
         search=search,
         taxonomy=TaxonomyService(store, SPACE),
         max_response_tokens=max_tokens,
+        # Off by default here: the fixture's files never existed on disk, so
+        # leaving it on would flag every hit and say nothing about the tools.
+        check_staleness=check_staleness,
     )
 
 
@@ -227,3 +232,29 @@ async def test_guidance_still_excludes_the_record_and_the_code(store: QdrantStor
     assert "repo/CHANGELOG.md" not in found
     assert "repo/src/store.py" not in found
     assert "repo/tests/test_store.py" not in found
+
+
+async def test_staleness_can_be_turned_off_for_a_source_less_deployment(
+    store: QdrantStore,
+) -> None:
+    """A deployment that puts the MCP server next to Qdrant rather than next to
+    the code cannot read the indexed files.
+
+    With the check on, every hit comes back flagged stale -- both wrong and
+    useless, because a flag on everything carries no signal. The fixture's
+    abs_paths point into a tmp dir that no longer holds these files, which is
+    exactly that situation.
+    """
+    checked = await _queries(store, check_staleness=True).search_code("store", limit=5)
+    assert checked.results
+    assert all(r.stale for r in checked.results)
+
+    unchecked = await _queries(store, check_staleness=False).search_code("store", limit=5)
+    assert unchecked.results
+    assert not any(r.stale for r in unchecked.results)
+
+
+async def test_file_context_honours_the_same_switch(store: QdrantStore) -> None:
+    response = await _queries(store, check_staleness=False).get_file_context("repo/src/store.py")
+    assert response.results
+    assert not any(r.stale for r in response.results)

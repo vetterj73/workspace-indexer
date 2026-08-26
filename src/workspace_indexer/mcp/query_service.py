@@ -44,10 +44,12 @@ class QueryService:
         search: SearchService,
         taxonomy: TaxonomyService,
         max_response_tokens: int = 6000,
+        check_staleness: bool = True,
     ) -> None:
         self._search = search
         self._taxonomy = taxonomy
         self._budget = ResultBudget(max_response_tokens)
+        self._check_staleness = check_staleness
 
     async def search_code(
         self,
@@ -115,7 +117,9 @@ class QueryService:
         Not a search: an agent that has a hit and wants the surrounding code
         should not have to guess a query that retrieves its neighbours.
         """
-        hits = await self._search.chunks_for_path(rel_path, limit=limit)
+        hits = await self._search.chunks_for_path(
+            rel_path, limit=limit, check_staleness=self._check_staleness
+        )
         hits.sort(key=lambda h: (h.rel_path, h.start_line))
         results, dropped = self._budget.pack(hits)
         return SearchResponse(
@@ -138,7 +142,14 @@ class QueryService:
         return await self._taxonomy.build()
 
     async def _run(self, query: str, filters: SearchFilters, limit: int) -> list[SearchHit]:
-        return await self._search.search(SearchRequest(query=query, filters=filters, limit=limit))
+        return await self._search.search(
+            SearchRequest(
+                query=query,
+                filters=filters,
+                limit=limit,
+                check_staleness=self._check_staleness,
+            )
+        )
 
     def _respond(
         self,

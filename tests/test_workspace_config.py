@@ -114,3 +114,20 @@ def test_eval_dataset_is_excluded_from_indexing() -> None:
     assert len(excluded) == 1
     assert next(iter(excluded)).name == "eval.yaml"
     assert next(iter(excluded)).is_absolute()
+
+
+def test_staleness_checking_defaults_on() -> None:
+    """The safe default: showing text that no longer exists is worse than
+    showing a warning. A deployment without source access turns it off."""
+    config = WorkspaceConfig.model_validate(_minimal())
+    assert config.search.check_staleness is True
+
+
+def test_staleness_checking_can_be_turned_off() -> None:
+    config = WorkspaceConfig.model_validate(
+        {
+            "workspace": {"name": "w", "roots": [{"path": "/tmp/a"}]},
+            "search": {"check_staleness": False},
+        }
+    )
+    assert config.search.check_staleness is False
