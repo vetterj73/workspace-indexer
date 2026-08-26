@@ -353,7 +353,7 @@ def evaluate(
             record = EvalRecord(
                 recorded_at=datetime.now(UTC).isoformat(),
                 label=label,
-                config_hash=ctx.settings.config_hash(),
+                config_hash=ctx.settings.config_hash(ctx.config),
                 space_slug=active.slug(),
                 embedding_model=active.model,
                 dimensions=active.dimensions,

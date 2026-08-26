@@ -64,7 +64,7 @@ class Indexer:
             run_id=new_run_id(),
             started_at=datetime.now(UTC),
             mode="dry-run" if dry_run else "index",
-            config_hash=self._settings.config_hash(),
+            config_hash=self._settings.config_hash(self._config),
         )
 
         with bound(run_id=stats.run_id):

@@ -25,6 +25,11 @@ those are the columns to check before reading a delta as a result. A
 find_guidance run over the eight guidance cases and a plain search run over all
 sixteen are both honest numbers, and comparing them is meaningless.
 
+`config` is the first eight characters of the configuration hash, and it covers
+the roots and exclusions as well as the embedding settings -- so rows in
+different `config` groups were measured over different corpora and do not
+compare, however similar the rest of the row looks.
+
 Query text is deliberately omitted. A document quoting the eval queries becomes
 a perfect match for them, which puts it at the top of its own results; the full
 per-case detail lives in `evals/*.json`.
@@ -34,9 +39,9 @@ per-case detail lives in `evals/*.json`.
 # three rows can share a configuration, differ by 0.15 MRR, and look like a
 # regression. They are what the numbers were measured *over*.
 _COLUMNS = (
-    "| recorded | embedding | dims | fusion | reranker | tool | cases "
+    "| recorded | config | embedding | dims | fusion | reranker | tool | cases "
     "| recall@k | MRR@k | misses |\n"
-    "|---|---|---|---|---|---|---|---|---|---|\n"
+    "|---|---|---|---|---|---|---|---|---|---|---|\n"
 )
 
 
@@ -74,6 +79,7 @@ advantages appear at millions of rows rather than the few thousand here.
 def render(records: list[EvalRecord]) -> str:
     rows = "".join(
         f"| {r.recorded_at[:19]} "
+        f"| `{r.config_hash[:8]}` "
         f"| `{r.embedding_model}` "
         f"| {r.dimensions} "
         f"| {r.fusion} "
