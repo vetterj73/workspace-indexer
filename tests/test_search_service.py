@@ -250,12 +250,15 @@ async def test_query_is_truncated_to_a_narrower_collection(store: QdrantStore) -
     body = "def a(): pass"
     source = make_source(body, kind=FileKind.CODE, language="python", rel_path="src/a.py")
     chunk = build_chunk(
-        source, "labbox", source_text=body, start_line=1, end_line=1,
-        chunker="code", version=1,
+        source,
+        "labbox",
+        source_text=body,
+        start_line=1,
+        end_line=1,
+        chunker="code",
+        version=1,
     )
-    await store.upsert(
-        narrow, [chunk], [[1.0, 0.0]], FakeSparseBackend().encode_documents([body])
-    )
+    await store.upsert(narrow, [chunk], [[1.0, 0.0]], FakeSparseBackend().encode_documents([body]))
     service = SearchService(
         store=store,
         # The embedder still produces its native 4 dimensions.

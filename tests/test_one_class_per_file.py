@@ -27,9 +27,7 @@ def test_at_most_one_top_level_class_per_module() -> None:
         rel = str(path.relative_to(SRC))
         if len(classes) > 1 and rel not in ALLOWED_MULTI_CLASS:
             offenders.append(f"{rel}: {classes}")
-    assert not offenders, "modules with more than one top-level class:\n  " + "\n  ".join(
-        offenders
-    )
+    assert not offenders, "modules with more than one top-level class:\n  " + "\n  ".join(offenders)
 
 
 def test_module_is_named_after_its_class() -> None:

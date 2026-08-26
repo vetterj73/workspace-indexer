@@ -54,9 +54,7 @@ def test_voyage_is_built_when_configured() -> None:
 
 def test_local_needs_no_credentials() -> None:
     """The offline path: no key, no network at construction."""
-    reranker = build_reranker(
-        _config(model="fastembed:Xenova/ms-marco-MiniLM-L-6-v2"), Settings()
-    )
+    reranker = build_reranker(_config(model="fastembed:Xenova/ms-marco-MiniLM-L-6-v2"), Settings())
     assert isinstance(reranker, LocalCrossEncoderReranker)
 
 

@@ -46,9 +46,7 @@ def compare(before: EvalRecord, after: EvalRecord) -> EvalComparison:
     movements = [
         CaseMovement(
             query=result.query,
-            before_rank=earlier[result.query].first_hit_rank
-            if result.query in earlier
-            else None,
+            before_rank=earlier[result.query].first_hit_rank if result.query in earlier else None,
             after_rank=result.first_hit_rank,
         )
         for result in after.results

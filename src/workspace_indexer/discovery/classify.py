@@ -23,8 +23,16 @@ IMAGE_EXTS = frozenset(
 # chunker and keep the code path focused on code.
 DATA_EXTS = frozenset(
     {
-        ".json", ".jsonl", ".ndjson", ".yaml", ".yml", ".toml",
-        ".ini", ".cfg", ".conf", ".properties",
+        ".json",
+        ".jsonl",
+        ".ndjson",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".ini",
+        ".cfg",
+        ".conf",
+        ".properties",
     }
 )
 TEXT_EXTS = frozenset(
@@ -39,12 +47,51 @@ MODIFIER_EXTS = frozenset(
 )
 BINARY_EXTS = frozenset(
     {
-        ".zip", ".gz", ".bz2", ".xz", ".zst", ".tar", ".7z", ".rar",
-        ".so", ".dylib", ".dll", ".exe", ".bin", ".o", ".a", ".class", ".jar",
-        ".pyc", ".pyo", ".wasm", ".pdb", ".db", ".sqlite", ".sqlite3",
-        ".mp3", ".mp4", ".wav", ".mov", ".avi", ".mkv", ".ogg", ".flac",
-        ".woff", ".woff2", ".ttf", ".otf", ".eot",
-        ".parquet", ".arrow", ".npy", ".npz", ".pkl", ".pt", ".onnx", ".safetensors",
+        ".zip",
+        ".gz",
+        ".bz2",
+        ".xz",
+        ".zst",
+        ".tar",
+        ".7z",
+        ".rar",
+        ".so",
+        ".dylib",
+        ".dll",
+        ".exe",
+        ".bin",
+        ".o",
+        ".a",
+        ".class",
+        ".jar",
+        ".pyc",
+        ".pyo",
+        ".wasm",
+        ".pdb",
+        ".db",
+        ".sqlite",
+        ".sqlite3",
+        ".mp3",
+        ".mp4",
+        ".wav",
+        ".mov",
+        ".avi",
+        ".mkv",
+        ".ogg",
+        ".flac",
+        ".woff",
+        ".woff2",
+        ".ttf",
+        ".otf",
+        ".eot",
+        ".parquet",
+        ".arrow",
+        ".npy",
+        ".npz",
+        ".pkl",
+        ".pt",
+        ".onnx",
+        ".safetensors",
     }
 )
 
@@ -52,9 +99,17 @@ BINARY_EXTS = frozenset(
 # information a human or an agent would ever search for by meaning.
 LOCKFILE_NAMES = frozenset(
     {
-        "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "poetry.lock",
-        "Cargo.lock", "Gemfile.lock", "composer.lock", "go.sum", "uv.lock",
-        "flake.lock", "Pipfile.lock",
+        "package-lock.json",
+        "yarn.lock",
+        "pnpm-lock.yaml",
+        "poetry.lock",
+        "Cargo.lock",
+        "Gemfile.lock",
+        "composer.lock",
+        "go.sum",
+        "uv.lock",
+        "flake.lock",
+        "Pipfile.lock",
     }
 )
 

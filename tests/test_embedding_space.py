@@ -27,14 +27,12 @@ def test_model_change_the_slug() -> None:
 
 
 def test_derived_space_is_distinct_from_a_native_one() -> None:
-    """"Asked the model for 1024" and "truncated 2048 down to 1024" are
+    """ "Asked the model for 1024" and "truncated 2048 down to 1024" are
     different vector spaces. Sharing a slug means sharing a collection, and a
     partial run then leaves the two silently mixed with nothing able to detect
     it."""
     native = EmbeddingSpace(model="voyageai:voyage-code-4", dimensions=1024)
-    derived = EmbeddingSpace(
-        model="voyageai:voyage-code-4", dimensions=1024, derived_from=2048
-    )
+    derived = EmbeddingSpace(model="voyageai:voyage-code-4", dimensions=1024, derived_from=2048)
     assert native.slug() != derived.slug()
     assert not native.is_derived
     assert derived.is_derived
@@ -42,9 +40,7 @@ def test_derived_space_is_distinct_from_a_native_one() -> None:
 
 def test_derived_slug_names_its_source() -> None:
     """So `status` can say what a reprojection came from."""
-    derived = EmbeddingSpace(
-        model="voyageai:voyage-code-4", dimensions=1024, derived_from=2048
-    )
+    derived = EmbeddingSpace(model="voyageai:voyage-code-4", dimensions=1024, derived_from=2048)
     assert "2048" in derived.slug()
     assert "1024" in derived.slug()
 

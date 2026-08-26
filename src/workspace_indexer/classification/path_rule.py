@@ -100,4 +100,3 @@ class PathRule:
             if fnmatch(probe, pattern) or fnmatch(probe, pattern.replace("**/", "/", 1)):
                 return Classification(doc_type=doc_type, confidence=confidence, reason=why)
         return None
-

@@ -137,9 +137,7 @@ def test_a_different_reranker_is_not_comparable() -> None:
     automatic "vs last run" that conflated them would report a 0.3 drop in MRR
     as though something had broken -- which is exactly what happened before
     reranker was part of this check."""
-    assert not _record(reranker="voyageai:rerank-2.5-lite").comparable_to(
-        _record(reranker="none")
-    )
+    assert not _record(reranker="voyageai:rerank-2.5-lite").comparable_to(_record(reranker="none"))
 
 
 def test_the_same_configuration_is_comparable() -> None:

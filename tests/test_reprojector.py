@@ -197,10 +197,8 @@ async def test_reproject_is_idempotent(store: QdrantStore, manifest: Manifest) -
     assert await store.count(target) == 5
 
 
-async def test_reprojected_space_gets_its_own_slug(
-    store: QdrantStore, manifest: Manifest
-) -> None:
-    """"Asked the model for 1024" and "truncated 2048 to 1024" are different
+async def test_reprojected_space_gets_its_own_slug(store: QdrantStore, manifest: Manifest) -> None:
+    """ "Asked the model for 1024" and "truncated 2048 to 1024" are different
     spaces. Sharing a slug means sharing a collection, and a partial run then
     leaves the two silently mixed."""
     await _seed(store)

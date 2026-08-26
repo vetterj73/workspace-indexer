@@ -55,8 +55,9 @@ def test_api_models_route_to_pydantic_ai() -> None:
 
 def test_fastembed_prefix_routes_to_the_local_backend() -> None:
     """The offline path, and the one the test suite uses for real relevance."""
-    settings = Settings(embedding_model="fastembed:BAAI/bge-small-en-v1.5",
-                        embedding_dimensions=384)
+    settings = Settings(
+        embedding_model="fastembed:BAAI/bge-small-en-v1.5", embedding_dimensions=384
+    )
     backend = build_dense_backend(settings)
     assert isinstance(backend, FastembedDenseBackend)
     assert backend.space.dimensions == 384
@@ -64,8 +65,9 @@ def test_fastembed_prefix_routes_to_the_local_backend() -> None:
 
 def test_local_backend_construction_downloads_nothing() -> None:
     """lazy_load means building a backend for a --dry-run costs nothing."""
-    settings = Settings(embedding_model="fastembed:BAAI/bge-small-en-v1.5",
-                        embedding_dimensions=384)
+    settings = Settings(
+        embedding_model="fastembed:BAAI/bge-small-en-v1.5", embedding_dimensions=384
+    )
     assert build_dense_backend(settings) is not None
 
 

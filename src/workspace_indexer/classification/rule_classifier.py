@@ -48,9 +48,7 @@ class RuleClassifier:
                     doc_type=verdict.doc_type.value,
                     confidence=verdict.confidence,
                 )
-                return verdict.model_copy(
-                    update={"reason": f"{rule.name}: {verdict.reason}"}
-                )
+                return verdict.model_copy(update={"reason": f"{rule.name}: {verdict.reason}"})
 
         fallback = _BY_KIND.get(file.kind)
         if fallback is not None:
