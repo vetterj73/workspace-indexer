@@ -8,6 +8,7 @@ say what to do, and commands that do not lie about what they did.
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -175,3 +176,26 @@ def test_reproject_creates_a_narrower_collection(project: Path) -> None:
     result = runner.invoke(app, ["reproject", "--dimensions", "128"])
     assert result.exit_code == 0, result.stdout
     assert "_128" in plain(result.stdout)
+
+
+def test_watch_without_the_extra_says_which_extra(monkeypatch: pytest.MonkeyPatch) -> None:
+    """watchfiles is optional so a `serve`-only install does not pull a Rust
+    binary it will never run. A bare ModuleNotFoundError does not say that."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def blocked(name: str, *args: object, **kwargs: object) -> object:
+        if name.startswith("watchfiles"):
+            raise ImportError("No module named 'watchfiles'")
+        return real_import(name, *args, **kwargs)  # pyright: ignore[reportArgumentType, reportCallIssue]
+
+    monkeypatch.delitem(sys.modules, "workspace_indexer.watching", raising=False)
+    monkeypatch.delitem(sys.modules, "workspace_indexer.watching.watcher", raising=False)
+    monkeypatch.delitem(sys.modules, "watchfiles", raising=False)
+    monkeypatch.setattr(builtins, "__import__", blocked)
+
+    result = CliRunner().invoke(app, ["watch"])
+
+    assert result.exit_code == 2
+    assert "watch" in result.output

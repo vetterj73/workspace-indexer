@@ -86,6 +86,21 @@ eval:
   dataset: ./config/eval.yaml
   metrics: [recall@10, mrr@10]
 
+watch:
+  # auto decides per root from the filesystem backing it, which is almost
+  # always right. inotify on a 9p/CIFS/NFS mount *succeeds* and then never
+  # delivers an event, so a root on one is polled instead.
+  #   auto | native | poll
+  mode: auto
+  # Wait this long after the last event before reindexing. One editor save is
+  # several events and a formatter run is hundreds.
+  debounce_ms: 1500
+  # Polling interval for roots that cannot use inotify.
+  poll_interval_ms: 5000
+  # Reload this file when it changes. Settings and ignore rules go live; a
+  # newly added *root* still needs `watch` restarted.
+  reload_config: true
+
 logging:
   level: INFO
   console: pretty        # pretty | json | off

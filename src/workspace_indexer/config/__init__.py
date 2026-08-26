@@ -25,6 +25,8 @@ from workspace_indexer.config.search_section import SearchSection
 from workspace_indexer.config.settings import Settings
 from workspace_indexer.config.strict import Strict
 from workspace_indexer.config.text_chunking import TextChunking
+from workspace_indexer.config.watch_mode import WatchMode
+from workspace_indexer.config.watch_section import WatchSection
 from workspace_indexer.config.workspace_config import WorkspaceConfig
 from workspace_indexer.config.workspace_section import WorkspaceSection
 
@@ -44,6 +46,8 @@ __all__ = [
     "RerankConfig",
     "RootConfig",
     "SearchSection",
+    "WatchMode",
+    "WatchSection",
     "Settings",
     "Strict",
     "TextChunking",

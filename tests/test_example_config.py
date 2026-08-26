@@ -35,9 +35,13 @@ def test_example_validates() -> None:
 
 def test_example_exercises_every_section() -> None:
     """If a section is missing from the example, its defaults never get
-    documented and a user has no idea the knob exists."""
-    raw = _load()
-    assert set(raw) == {"workspace", "index", "chunking", "search", "eval", "logging"}
+    documented and a user has no idea the knob exists.
+
+    Derived from the model rather than hardcoded, so adding a section fails
+    this test until the example documents it -- rather than failing it until
+    someone updates a list here, which teaches people to edit the list.
+    """
+    assert set(_load()) == set(WorkspaceConfig.model_fields)
 
 
 def test_example_does_not_ship_cloud_logging_enabled() -> None:

@@ -12,7 +12,8 @@ from rich.console import Console
 from rich.table import Table
 
 from workspace_indexer.app_context import AppContext
-from workspace_indexer.config import ConfigError
+from workspace_indexer.config import ConfigError, load_workspace_config
+from workspace_indexer.config.loader import DEFAULT_CONFIG_PATH
 from workspace_indexer.evaluation import (
     EvalComparison,
     EvalHarness,
@@ -483,6 +484,61 @@ def serve(config: ConfigOption = None) -> None:
         build_mcp_server(build_query_service(ctx)).run()
     finally:
         asyncio.run(ctx.close())
+
+
+@app.command()
+def watch(config: ConfigOption = None) -> None:
+    """Watch the configured roots and reindex as files change.
+
+    A trigger, not a second indexing path: every change ends up in the same
+    `index` run the CLI performs, scoped to the root that changed.
+    """
+    try:
+        from workspace_indexer.watching import Watcher
+    except ImportError as exc:  # pragma: no cover - exercised in test_cli
+        # watchfiles is an optional extra, so that an install that only wants
+        # `serve` does not pull a Rust binary it will never run.
+        console.print(
+            "[red]the watcher needs the `watch` extra: pip install 'workspace-indexer[watch]'[/red]"
+        )
+        raise typer.Exit(code=2) from exc
+
+    ctx = _context(config)
+    resolved = config or DEFAULT_CONFIG_PATH
+
+    async def run() -> None:
+        indexer = ctx.indexer()
+
+        async def reindex(root: str | None) -> None:
+            try:
+                stats = await indexer.run(only_root=root)
+            except Exception as exc:
+                # A watcher that dies on one bad reindex is worse than one that
+                # reports it and keeps watching.
+                console.print(f"[red]reindex of {root} failed: {exc}[/red]")
+                return
+            console.print(
+                f"[dim]{root}: {stats.files_changed} changed, "
+                f"{stats.chunks_upserted} written, {stats.chunks_deleted} removed[/dim]"
+            )
+
+        watcher = Watcher(
+            ctx.config,
+            reindex=reindex,
+            config_path=resolved,
+            reload_config=lambda: load_workspace_config(resolved),
+        )
+        for label, mode in watcher.plan().items():
+            console.print(f"  {label}: [cyan]{mode.value}[/cyan]")
+        console.print("[dim]Watching. Ctrl-C to stop.[/dim]")
+        try:
+            await watcher.run()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            await ctx.close()
+
+    asyncio.run(run())
 
 
 def _preview(text: str, lines: int = 6) -> str:
