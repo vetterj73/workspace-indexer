@@ -256,3 +256,17 @@ def test_an_empty_report_says_so(tmp_path: Path) -> None:
     from workspace_indexer.evaluation import render
 
     assert "No runs recorded yet" in render([])
+
+
+def test_runs_over_different_datasets_are_not_comparable() -> None:
+    """A 13-case corpus run and a 16-case run over this repo matched on every
+    other field and were reported as a delta -- a number meaning nothing with a
+    plus sign in front of it."""
+    base = _record()
+    other = base.model_copy(update={"case_count": base.case_count + 3})
+    assert not base.comparable_to(other)
+
+
+def test_the_same_dataset_still_compares() -> None:
+    base = _record()
+    assert base.comparable_to(base.model_copy(update={"recorded_at": "2026-01-01T00:00:00Z"}))

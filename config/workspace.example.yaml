@@ -33,6 +33,11 @@ index:
     - "**/.mypy_cache/**"
     - "**/.pytest_cache/**"
     - "**/.ruff_cache/**"
+    # A corpus repo cloned under a configured root joins the main index
+    # and shifts every eval number for reasons unrelated to any code
+    # change. Give it its own workspace name instead, so it gets its own
+    # collection and its own baselines.
+    # - "SomeBigCorpusRepo/**"
     # Our own eval artefacts (config/eval.yaml, evals/, docs/eval-baselines.md)
     # need no entry here: they quote every eval query verbatim, so excluding
     # them is a correctness rule and is enforced in code, not configuration.

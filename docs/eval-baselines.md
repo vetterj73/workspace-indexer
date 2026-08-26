@@ -15,6 +15,7 @@ per-case detail lives in `evals/*.json`.
 
 | recorded | embedding | dims | fusion | reranker | tool | cases | recall@k | MRR@k | misses |
 |---|---|---|---|---|---|---|---|---|---|
+| 2026-08-26T17:01:07 | `voyageai:voyage-code-4` | 1024 | rrf | `voyageai:rerank-2.5-lite` | search | all | 0.875 | 0.714 | 3/16 |
 | 2026-08-26T05:35:31 | `voyageai:voyage-code-4` | 1024 | rrf | `voyageai:rerank-2.5-lite` | search | all | 0.875 | 0.750 | 3/16 |
 | 2026-08-26T05:32:22 | `voyageai:voyage-code-4` | 1024 | rrf | `voyageai:rerank-2.5-lite` | find_guidance | guidance | 0.938 | 0.900 | 1/8 |
 | 2026-08-26T05:31:31 | `voyageai:voyage-code-4` | 1024 | rrf | `voyageai:rerank-2.5-lite` | find_guidance | guidance | 0.812 | 0.775 | 2/8 |

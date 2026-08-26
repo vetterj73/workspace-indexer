@@ -71,4 +71,14 @@ class EvalRecord(BaseModel):
             and self.reranker == other.reranker
             and self.retriever == other.retriever
             and self.case_filter == other.case_filter
+            # Different dataset, different question. A 13-case corpus run and a
+            # 16-case run over this repo matched on every field above and were
+            # reported as a delta twice in one session, which is how a number
+            # that means nothing acquires a plus sign in front of it.
+            #
+            # A weak proxy for "same dataset" -- two different datasets of the
+            # same size still compare -- but it costs nothing and catches the
+            # case that actually happened. config_hash omitting `roots` is the
+            # real gap and is tracked separately.
+            and self.case_count == other.case_count
         )
