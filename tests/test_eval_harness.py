@@ -14,9 +14,7 @@ from workspace_indexer.evaluation import EvalCase, EvalReport, EvalResult, load_
 
 
 def _result(expected: list[str], found: list[str]) -> EvalResult:
-    rank = next(
-        (i for i, path in enumerate(found, 1) if any(w in path for w in expected)), None
-    )
+    rank = next((i for i, path in enumerate(found, 1) if any(w in path for w in expected)), None)
     return EvalResult(query="q", expected=expected, found=found, first_hit_rank=rank)
 
 

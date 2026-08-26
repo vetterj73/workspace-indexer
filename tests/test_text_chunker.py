@@ -86,9 +86,7 @@ def test_overlap_keeps_a_boundary_passage_retrievable() -> None:
     chunker = TextChunker("ws")
     without = list(chunker.chunk(file, _config(max_tokens=120, overlap_paragraphs=0)))
     with_overlap = list(chunker.chunk(file, _config(max_tokens=120, overlap_paragraphs=1)))
-    assert sum(len(c.source_text) for c in with_overlap) > sum(
-        len(c.source_text) for c in without
-    )
+    assert sum(len(c.source_text) for c in with_overlap) > sum(len(c.source_text) for c in without)
 
 
 def test_chunk_ids_are_unique_within_a_file() -> None:

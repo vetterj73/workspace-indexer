@@ -50,6 +50,13 @@ jobs:
       - name: Lint (ruff)
         run: poetry run ruff check src/ tests/
 
+      # `check` and `format` catch different things: check is lint rules,
+      # format is layout. Without this gate the tree drifts out of formatted
+      # shape, and then the first person to run `ruff format` sweeps twenty
+      # untouched files into an unrelated pull request.
+      - name: Format (ruff)
+        run: poetry run ruff format --check src/ tests/
+
       - name: Types (pyright, strict)
         run: poetry run pyright
 

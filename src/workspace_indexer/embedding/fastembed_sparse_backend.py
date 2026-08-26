@@ -27,9 +27,7 @@ class FastembedSparseBackend:
         from fastembed import SparseTextEmbedding
 
         self.model = model
-        self._encoder: SparseTextEmbedding = SparseTextEmbedding(
-            model_name=model, lazy_load=True
-        )
+        self._encoder: SparseTextEmbedding = SparseTextEmbedding(model_name=model, lazy_load=True)
 
     def encode_documents(self, texts: Sequence[str]) -> list[SparseVec]:
         if not texts:

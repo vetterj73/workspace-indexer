@@ -61,6 +61,12 @@ chunking:
     mode: metadata_only
 
 search:
+  # Check each hit against the file on disk before returning it, so a
+  # result never silently shows text that no longer exists. Needs read
+  # access to the indexed source: set false where the MCP server runs next
+  # to Qdrant rather than next to the code, or every hit comes back flagged
+  # stale. See docs/deployment.md.
+  check_staleness: true
   fusion: rrf            # rrf | dense_only | sparse_only (latter two for debugging)
   prefetch_limit: 50
   default_limit: 10

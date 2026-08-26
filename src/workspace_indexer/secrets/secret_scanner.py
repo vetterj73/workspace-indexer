@@ -54,8 +54,16 @@ _ENTROPY_THRESHOLD = 3.6
 # Obvious non-secrets that would otherwise clear the entropy bar.
 _PLACEHOLDERS = frozenset(
     {
-        "changeme", "your-api-key-here", "xxxxxxxxxxxxxxxx", "insert-key-here",
-        "replace-me", "todo", "none", "null", "example", "placeholder",
+        "changeme",
+        "your-api-key-here",
+        "xxxxxxxxxxxxxxxx",
+        "insert-key-here",
+        "replace-me",
+        "todo",
+        "none",
+        "null",
+        "example",
+        "placeholder",
     }
 )
 
@@ -101,9 +109,7 @@ def scan(text: str, *, max_findings: int = 5) -> list[SecretFinding]:
     for number, line in enumerate(text.splitlines(), start=1):
         for rule, pattern, description in _SIGNATURES:
             if pattern.search(line):
-                findings.append(
-                    SecretFinding(rule=rule, line=number, description=description)
-                )
+                findings.append(SecretFinding(rule=rule, line=number, description=description))
                 break
         else:
             match = _ASSIGNMENT.search(line)

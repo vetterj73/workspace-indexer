@@ -160,8 +160,9 @@ def test_chunk_ids_unique_within_a_file() -> None:
 def test_works_for_a_language_we_wrote_no_rules_for() -> None:
     """The point of using the pack's own chunker: coverage is not limited to
     the languages we thought about."""
-    chunks = _chunk("export const run = (a: number): number => a + 1;\n", language="typescript",
-                    min_tokens=1)
+    chunks = _chunk(
+        "export const run = (a: number): number => a + 1;\n", language="typescript", min_tokens=1
+    )
     assert chunks
     assert chunks[0].meta.language == "typescript"
 

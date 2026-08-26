@@ -75,9 +75,7 @@ def _register(manifest: Manifest, source: SourceFile, chunks: list[Chunk]) -> No
     manifest.record_space(source.root_label, source.rel_path, SPACE, len(chunks))
 
 
-def _decide(
-    manifest: Manifest, candidate: FileCandidate, *, force: bool = False
-) -> IndexDecision:
+def _decide(manifest: Manifest, candidate: FileCandidate, *, force: bool = False) -> IndexDecision:
     return manifest.decide_from_stat(
         candidate, space_slug=SPACE, chunker_version=VERSION, force=force
     )
@@ -179,9 +177,7 @@ def test_new_space_backfills_an_unchanged_file(manifest: Manifest) -> None:
 def test_force_skips_straight_past_every_shortcut(manifest: Manifest) -> None:
     source = _source()
     _register(manifest, source, [_chunk(source, "body")])
-    decision = _decide(
-        manifest, _candidate(mtime_ns=source.mtime_ns, size=source.size), force=True
-    )
+    decision = _decide(manifest, _candidate(mtime_ns=source.mtime_ns, size=source.size), force=True)
     assert decision is IndexDecision.FORCED
     assert decision.needs_embedding
 
@@ -375,8 +371,9 @@ def test_spaces_are_listed(manifest: Manifest) -> None:
 def test_run_history_records_cost(manifest: Manifest) -> None:
     """So "why did this cost $40" is answerable from the manifest rather than
     by scraping logs."""
-    stats = RunStats(run_id="run1", started_at=datetime.now(UTC), mode="index",
-                     config_hash="abc123")
+    stats = RunStats(
+        run_id="run1", started_at=datetime.now(UTC), mode="index", config_hash="abc123"
+    )
     manifest.start_run(stats)
     stats.finished_at = datetime.now(UTC)
     stats.files_seen = 100
@@ -588,8 +585,11 @@ def _verdict(doc_type: DocumentType = DocumentType.NORMATIVE) -> Classification:
 def test_classification_round_trips(manifest: Manifest) -> None:
     source = _source()
     manifest.record_file(
-        source, chunker="text", chunker_version=VERSION,
-        classification=_verdict(), classifier_version=1,
+        source,
+        chunker="text",
+        chunker_version=VERSION,
+        classification=_verdict(),
+        classifier_version=1,
     )
     cached = manifest.cached_classification(source, classifier_version=1)
     assert cached is not None
@@ -603,8 +603,11 @@ def test_changed_content_invalidates_the_cached_verdict(manifest: Manifest) -> N
     reclassified, since its type may well have changed with them."""
     source = _source(text="original")
     manifest.record_file(
-        source, chunker="text", chunker_version=VERSION,
-        classification=_verdict(), classifier_version=1,
+        source,
+        chunker="text",
+        chunker_version=VERSION,
+        classification=_verdict(),
+        classifier_version=1,
     )
     edited = _source(text="completely different content")
     assert manifest.cached_classification(edited, classifier_version=1) is None
@@ -615,8 +618,11 @@ def test_a_moved_file_is_not_reclassified(manifest: Manifest) -> None:
     correct, because path is itself a classification signal."""
     source = _source("src/a.py")
     manifest.record_file(
-        source, chunker="text", chunker_version=VERSION,
-        classification=_verdict(), classifier_version=1,
+        source,
+        chunker="text",
+        chunker_version=VERSION,
+        classification=_verdict(),
+        classifier_version=1,
     )
     assert manifest.cached_classification(_source("src/b.py"), 1) is None
 
@@ -626,8 +632,11 @@ def test_bumping_the_classifier_version_invalidates(manifest: Manifest) -> None:
     longer trust."""
     source = _source()
     manifest.record_file(
-        source, chunker="text", chunker_version=VERSION,
-        classification=_verdict(), classifier_version=1,
+        source,
+        chunker="text",
+        chunker_version=VERSION,
+        classification=_verdict(),
+        classifier_version=1,
     )
     assert manifest.cached_classification(source, classifier_version=1) is not None
     assert manifest.cached_classification(source, classifier_version=2) is None
@@ -674,9 +683,7 @@ def test_migration_adds_columns_to_an_older_database(tmp_path: Path) -> None:
         assert record is not None
         assert record.sha256 == "abc"
 
-    columns = {
-        r[1] for r in sqlite3.connect(path).execute("PRAGMA table_info(files)")
-    }
+    columns = {r[1] for r in sqlite3.connect(path).execute("PRAGMA table_info(files)")}
     assert {"doc_type", "doc_confidence", "doc_reason", "classifier_version"} <= columns
 
 

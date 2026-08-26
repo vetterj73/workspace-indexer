@@ -252,8 +252,9 @@ async def test_delete_by_path_removes_every_chunk_of_a_file(store: QdrantStore) 
         _chunk("src/big.py", "part one body"),
         _chunk("src/big.py", "part two body"),
     ]
-    await store.upsert(SPACE, parts, [_dense(1, 0, 0, 0), _dense(0, 1, 0, 0)],
-                       [_sparse(1), _sparse(2)])
+    await store.upsert(
+        SPACE, parts, [_dense(1, 0, 0, 0), _dense(0, 1, 0, 0)], [_sparse(1), _sparse(2)]
+    )
     assert await store.count(SPACE) == 2
     await store.delete_by_path(SPACE, "repo_one", "src/big.py")
     assert await store.count(SPACE) == 0
@@ -276,8 +277,10 @@ async def test_scroll_yields_payloads_and_named_vectors(store: QdrantStore) -> N
         assert vectors is not None
         seen.append((point_id, str(payload["rel_path"]), sorted(vectors)))
     assert len(seen) == 3
-    assert all(v == [SPARSE_VECTOR, DENSE_VECTOR] or v == sorted([DENSE_VECTOR, SPARSE_VECTOR])
-               for _, _, v in seen)
+    assert all(
+        v == [SPARSE_VECTOR, DENSE_VECTOR] or v == sorted([DENSE_VECTOR, SPARSE_VECTOR])
+        for _, _, v in seen
+    )
 
 
 async def test_scroll_without_vectors_reports_none(store: QdrantStore) -> None:

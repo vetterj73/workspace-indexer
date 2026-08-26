@@ -276,9 +276,7 @@ class Indexer:
             return cached
         return self._classifier.classify(source)
 
-    async def _flush(
-        self, pending: list[PendingFile], stats: RunStats, *, dry_run: bool
-    ) -> None:
+    async def _flush(self, pending: list[PendingFile], stats: RunStats, *, dry_run: bool) -> None:
         if not pending:
             return
 

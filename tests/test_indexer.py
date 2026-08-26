@@ -311,10 +311,7 @@ async def test_force_still_removes_chunks_that_are_no_longer_produced(
 async def test_chunks_carry_the_document_type(harness: Harness) -> None:
     """One classification per file, inherited by every chunk of it."""
     await harness.indexer().run()
-    types = {
-        str(payload.get("doc_type"))
-        async for _, payload, _ in harness.store.scroll(SPACE)
-    }
+    types = {str(payload.get("doc_type")) async for _, payload, _ in harness.store.scroll(SPACE)}
     assert "implementation" in types
     assert None not in types
     assert "MISSING" not in types
@@ -359,19 +356,13 @@ async def test_a_newly_withheld_file_has_its_old_chunks_purged(
     assert stats.chunks_deleted > 0
     assert await harness.store.count(SPACE) < before
     assert harness.manifest.get_file("workspace", "repo_one/src/widget.py") is None
-    paths = {
-        str(payload.get("rel_path")) async for _, payload, _ in harness.store.scroll(SPACE)
-    }
+    paths = {str(payload.get("rel_path")) async for _, payload, _ in harness.store.scroll(SPACE)}
     assert "repo_one/src/widget.py" not in paths
 
 
-async def test_a_withheld_file_does_not_abort_the_run(
-    harness: Harness, workspace: Path
-) -> None:
+async def test_a_withheld_file_does_not_abort_the_run(harness: Harness, workspace: Path) -> None:
     key = "AK" + "IA" + "IOSFODNN7EXAMPLE"
-    (workspace / "repo_one" / "secrets.json").write_text(
-        f'{{"aws": "{key}"}}', encoding="utf-8"
-    )
+    (workspace / "repo_one" / "secrets.json").write_text(f'{{"aws": "{key}"}}', encoding="utf-8")
     stats = await harness.indexer().run()
     assert stats.errors == 0
     assert stats.chunks_upserted > 0

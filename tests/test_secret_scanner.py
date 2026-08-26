@@ -33,9 +33,7 @@ FAKE_AWS = _PREFIX["aws"] + "IOSFODNN7EXAMPLE"
 FAKE_OPENAI = _PREFIX["openai"] + "a1B2c3D4e5F6g7H8i9J0" * 2
 FAKE_SLACK = _PREFIX["slack"] + "1234567890-abcdefghijklmnop"
 FAKE_GOOGLE = _PREFIX["google"] + "B" * 35
-FAKE_PRIVATE_KEY = (
-    "-----BEGIN RSA PRIVATE KEY-----\nMIIEow...\n-----END RSA PRIVATE KEY-----"
-)
+FAKE_PRIVATE_KEY = "-----BEGIN RSA PRIVATE KEY-----\nMIIEow...\n-----END RSA PRIVATE KEY-----"
 
 
 def test_the_case_that_actually_bit_this_project() -> None:

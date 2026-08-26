@@ -34,11 +34,7 @@ class EvalResult(BaseModel):
     def recall(self) -> float:
         if not self.expected:
             return 0.0
-        hit = sum(
-            1
-            for want in self.expected
-            if any(path_matches(want, got) for got in self.found)
-        )
+        hit = sum(1 for want in self.expected if any(path_matches(want, got) for got in self.found))
         return hit / len(self.expected)
 
     @property

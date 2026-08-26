@@ -119,6 +119,17 @@ Qdrant must be in server mode (`QDRANT_MODE=server`). Embedded Qdrant takes an
 exclusive lock on its storage directory, and indexing from another terminal
 would fail for as long as the agent is connected.
 
+## Running it somewhere else
+
+This README is a developer quickstart. **[docs/deployment.md](docs/deployment.md)**
+covers operating it on a box that is not the dev machine: what has to be
+co-located with what, choosing a storage mode, installing Qdrant on Linux and
+Windows, a worked split deployment, and what re-indexing actually costs.
+
+The short version of the part that surprises people: the indexer is the only
+component pinned to the source files. Qdrant can live anywhere, and the MCP
+server needs the source only for staleness checks — which is a setting.
+
 ## Development
 
 ```bash

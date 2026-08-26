@@ -59,9 +59,7 @@ def test_hits_without_a_path_are_left_alone(tmp_path: Path) -> None:
     assert mark_stale([hit])[0].stale is False
 
 
-def test_one_read_per_file_not_per_hit(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_one_read_per_file_not_per_hit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Several chunks of one file routinely appear in the same result set."""
     path = tmp_path / "a.py"
     path.write_text(f"{BODY}\n\ndef other():\n    pass\n", encoding="utf-8")

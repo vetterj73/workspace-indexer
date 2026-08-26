@@ -55,10 +55,7 @@ class Manifest:
         live index rather than at startup. Rebuilding is not an acceptable
         answer when a full index costs real time and money.
         """
-        existing = {
-            str(row["name"])
-            for row in self._db.execute("PRAGMA table_info(files)")
-        }
+        existing = {str(row["name"]) for row in self._db.execute("PRAGMA table_info(files)")}
         additions = {
             "doc_type": "TEXT NOT NULL DEFAULT 'unknown'",
             "doc_confidence": "REAL NOT NULL DEFAULT 0.0",
@@ -357,9 +354,9 @@ class Manifest:
         log.info("state.space_forgotten", space=space_slug, chunks=removed)
         return removed
 
-    def orphans(self, seen: set[tuple[str, str]], root_label: str | None = None) -> list[
-        tuple[str, str]
-    ]:
+    def orphans(
+        self, seen: set[tuple[str, str]], root_label: str | None = None
+    ) -> list[tuple[str, str]]:
         """Rung 5: rows with no corresponding file on disk.
 
         Scoped to a root when only one was walked, so indexing a single root
@@ -421,8 +418,7 @@ class Manifest:
 
     def _has_space(self, root_label: str, rel_path: str, space_slug: str) -> bool:
         row = self._db.execute(
-            "SELECT 1 FROM file_spaces "
-            "WHERE root_label = ? AND rel_path = ? AND space_slug = ?",
+            "SELECT 1 FROM file_spaces WHERE root_label = ? AND rel_path = ? AND space_slug = ?",
             (root_label, rel_path, space_slug),
         ).fetchone()
         return row is not None

@@ -29,6 +29,7 @@ def _allowed(rel_path: str, patterns: Sequence[str] | None) -> bool:
     probe = "/" + rel_path.lstrip("/")
     return any(fnmatch(probe, p) or fnmatch(rel_path, p) for p in patterns)
 
+
 # Kinds we never decode: reading them as text is meaningless and, for a large
 # binary, wasteful.
 _NEVER_TEXT = frozenset({FileKind.IMAGE, FileKind.OPAQUE, FileKind.PDF})

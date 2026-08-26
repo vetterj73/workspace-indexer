@@ -66,8 +66,9 @@ def test_help_lists_every_command() -> None:
         assert command in plain(result.stdout)
 
 
-def test_missing_config_exits_cleanly_with_advice(tmp_path: Path,
-                                                  monkeypatch: pytest.MonkeyPatch) -> None:
+def test_missing_config_exits_cleanly_with_advice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A config problem is a user problem, not a traceback."""
     monkeypatch.chdir(tmp_path)
     result = runner.invoke(app, ["status"])
