@@ -228,3 +228,35 @@ def test_an_all_letter_value_is_an_identifier_however_long() -> None:
     letters is a name, whatever its length or casing."""
     assert not scan('"password": "SomeVeryLongCamelCasedIdentifierName"')
     assert scan('"password": "SomeVeryLongCamelCased1dentifierN4me~x"')
+
+
+# --- false positives found by indexing a real workspace --------------------
+#
+# Widening the value class to catch `~` made the entropy rule fire on ordinary
+# code. Five files were purged from a live index over these before it was
+# caught, which is a silent loss of content -- the worse failure of the two.
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # Rust and C++ paths.
+        "auth_mode: AuthMode::TrustedLocal,",
+        "config.auth_mode = ralph_api::AuthMode::TrustedLocal;",
+        # A generic type.
+        "pub auth: Option<AuthMeta>,",
+        # The *name* of a credential, not the credential.
+        "DOCKER_CREDENTIALS = 'docker-hub-credentials'",
+        'api_key_name: "my-service-account-key"',
+    ],
+)
+def test_paths_types_and_credential_names_are_not_secrets(line: str) -> None:
+    assert not scan(line)
+
+
+def test_hyphenated_and_underscored_names_read_as_identifiers() -> None:
+    """`docker-hub-credentials` is all letters once separators are stripped.
+    A generated value still mixes in digits or symbols."""
+    assert not scan('"password": "some-long-kebab-cased-name-here"')
+    assert not scan('"password": "some_long_snake_cased_name_here"')
+    assert scan('"password": "some-long-kebab-c4sed-name~here"')

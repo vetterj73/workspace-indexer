@@ -104,12 +104,20 @@ def shannon_entropy(value: str) -> float:
 _ATTRIBUTE = re.compile(r"\A[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+\Z")
 _CONVENTIONAL_NAME = re.compile(r"\A(?:[a-z_][a-z0-9_]*|[A-Z_][A-Z0-9_]*|[a-zA-Z][a-zA-Z]*)\Z")
 
-# An expression rather than a literal: `builder.Configuration["x"]`,
-# `appInsights.properties.ConnectionString`, `keyVault.getSecret(...)`.
-# Widening the value class to catch `~` also started catching these, and
-# withholding a whole file over a variable reference is a silent loss of
-# content -- the worse error of the two here.
-_EXPRESSION = re.compile(r"[()\[\]{}]|\A[A-Za-z_][A-Za-z0-9_]*\.")
+# An expression or a type rather than a literal. Widening the value class to
+# catch `~` started catching all of these, and withholding a whole file over a
+# variable reference is a silent loss of content -- the worse error here.
+#
+#   builder.Configuration["x"]          brackets
+#   AuthMode::TrustedLocal              a Rust or C++ path
+#   Option<AuthMeta>                    a generic type
+#   appInsights.properties.Connection   a dotted path
+_EXPRESSION = re.compile(r"[()\[\]{}<>]|::|\A[A-Za-z_][A-Za-z0-9_]*\.")
+
+# Word separators inside an identifier. `docker-hub-credentials` is the *name*
+# of a credential, not the credential; stripping these before the all-letters
+# test recognises it as a name rather than a generated value.
+_WORD_SEPARATORS = str.maketrans("", "", "-_")
 
 
 def _looks_generated(value: str) -> bool:
@@ -124,10 +132,10 @@ def _looks_generated(value: str) -> bool:
         return False
     if _EXPRESSION.search(bare):
         return False
-    # A generated credential mixes cases with digits or symbols. All-letters is
-    # an identifier -- `sqlAdminPassword`, `ClientCredentials` -- however long
-    # and however camel-cased, and camelCase clears the entropy bar easily.
-    if bare.isalpha():
+    # A generated credential mixes letters with digits or symbols. All-letters
+    # is an identifier -- `sqlAdminPassword`, `docker-hub-credentials` --
+    # however long and however cased, and both clear the entropy bar easily.
+    if bare.translate(_WORD_SEPARATORS).isalpha():
         return False
     return shannon_entropy(value) >= _ENTROPY_THRESHOLD
 
