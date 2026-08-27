@@ -547,6 +547,42 @@ async def test_removing_a_root_from_config_drops_its_chunks(
     await client.close()
 
 
+async def test_indexing_records_what_each_file_imports(harness: Harness) -> None:
+    """The graph is written in the same transaction as the chunks, so it
+    cannot survive a file whose chunks were rolled back."""
+    await harness.indexer().run()
+
+    edges = harness.manifest.imports_of("workspace", "repo_one/src/widget.py")
+    assert edges
+    assert all(e.line >= 1 for e in edges)
+
+
+async def test_edited_imports_replace_the_old_ones(harness: Harness, workspace: Path) -> None:
+    target = workspace / "repo_one" / "src" / "widget.py"
+    target.write_text("import os\n\n\ndef widget():\n    return os.name\n", encoding="utf-8")
+    await harness.indexer().run()
+    assert [
+        e.module for e in harness.manifest.imports_of("workspace", "repo_one/src/widget.py")
+    ] == ["os"]
+
+    target.write_text("import sys\n\n\ndef widget():\n    return sys.platform\n", encoding="utf-8")
+    await harness.indexer().run()
+    assert [
+        e.module for e in harness.manifest.imports_of("workspace", "repo_one/src/widget.py")
+    ] == ["sys"]
+
+
+async def test_deleting_a_file_removes_it_from_the_graph(harness: Harness, workspace: Path) -> None:
+    target = workspace / "repo_one" / "src" / "widget.py"
+    target.write_text("import shared_thing\n\n\ndef widget():\n    return 1\n", encoding="utf-8")
+    await harness.indexer().run()
+    assert harness.manifest.importers_of("shared_thing")
+
+    target.unlink()
+    await harness.indexer().run()
+    assert harness.manifest.importers_of("shared_thing") == []
+
+
 async def test_doc_type_reaches_the_embedded_text_when_enabled(harness: Harness) -> None:
     """The header is built during chunking, so the verdict has to be on the
     file before the split rather than stamped on afterwards."""

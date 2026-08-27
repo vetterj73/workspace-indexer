@@ -20,6 +20,7 @@ from types import TracebackType
 
 from workspace_indexer.classification import Classification
 from workspace_indexer.discovery.file_candidate import FileCandidate
+from workspace_indexer.graph.import_edge import ImportEdge
 from workspace_indexer.models import Chunk, DocumentType, RunStats, SourceFile
 from workspace_indexer.obs.logging import get_logger
 from workspace_indexer.state.chunk_delta import ChunkDelta
@@ -300,6 +301,80 @@ class Manifest:
                 (root_label, rel_path, space_slug),
             )
         ]
+
+    def record_imports(self, root_label: str, rel_path: str, edges: Iterable[ImportEdge]) -> None:
+        """Replace everything this file imports.
+
+        Replace rather than merge: an import deleted from the source has to
+        disappear from the graph, and comparing edge-by-edge to discover that
+        costs more than rewriting a handful of rows.
+        """
+        self._db.execute(
+            "DELETE FROM imports WHERE root_label = ? AND rel_path = ?",
+            (root_label, rel_path),
+        )
+        self._db.executemany(
+            "INSERT OR REPLACE INTO imports "
+            "(root_label, rel_path, module, kind, is_relative, line) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [(root_label, rel_path, e.module, e.kind, int(e.is_relative), e.line) for e in edges],
+        )
+
+    def imports_of(self, root_label: str, rel_path: str) -> list[ImportEdge]:
+        rows = self._db.execute(
+            "SELECT module, kind, is_relative, line FROM imports "
+            "WHERE root_label = ? AND rel_path = ? ORDER BY line",
+            (root_label, rel_path),
+        )
+        return [
+            ImportEdge(
+                module=str(r["module"]),
+                kind=str(r["kind"]),
+                is_relative=bool(r["is_relative"]),
+                line=int(r["line"]),
+            )
+            for r in rows
+        ]
+
+    def importers_of(self, module: str) -> list[tuple[str, str, int]]:
+        """Every file importing `module`, as (root_label, rel_path, line).
+
+        The reverse edge. Exact string match, because this rung stores what the
+        source wrote and has not resolved anything -- `.models` and
+        `workspace_indexer.models` are two different strings here even when
+        they name the same file. Resolution is what would join them, and
+        whether that is worth building is what the coverage numbers decide.
+        """
+        rows = self._db.execute(
+            "SELECT root_label, rel_path, line FROM imports WHERE module = ? "
+            "ORDER BY root_label, rel_path, line",
+            (module,),
+        )
+        return [(str(r["root_label"]), str(r["rel_path"]), int(r["line"])) for r in rows]
+
+    def import_coverage(self) -> dict[str, tuple[int, int]]:
+        """Per language: files with at least one edge, and total files.
+
+        Both halves matter. A language with no resolver reports (0, n), which
+        has to stay distinguishable from a language that genuinely imports
+        nothing -- otherwise an empty answer from the graph reads as "nothing
+        depends on this" when it means "we never looked".
+        """
+        rows = self._db.execute(
+            """
+            SELECT f.language AS language,
+                   COUNT(*) AS files,
+                   SUM(CASE WHEN i.n > 0 THEN 1 ELSE 0 END) AS with_edges
+            FROM files f
+            LEFT JOIN (
+                SELECT root_label, rel_path, COUNT(*) AS n
+                FROM imports GROUP BY root_label, rel_path
+            ) i ON i.root_label = f.root_label AND i.rel_path = f.rel_path
+            WHERE f.language IS NOT NULL
+            GROUP BY f.language
+            """
+        )
+        return {str(r["language"]): (int(r["with_edges"] or 0), int(r["files"])) for r in rows}
 
     def forget_file(self, root_label: str, rel_path: str) -> None:
         """Drops the file and, by cascade, its chunk and space rows."""

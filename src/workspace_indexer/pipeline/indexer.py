@@ -15,6 +15,7 @@ from workspace_indexer.discovery import Walker
 from workspace_indexer.discovery.file_candidate import FileCandidate
 from workspace_indexer.embedding.embedding_service import EmbeddingService
 from workspace_indexer.embedding.sparse_backend import SparseBackend
+from workspace_indexer.graph import ImportScanner
 from workspace_indexer.models import EmbeddingSpace, RunStats, SourceFile
 from workspace_indexer.obs.context import bound, file_context, new_run_id
 from workspace_indexer.obs.logging import get_logger
@@ -56,6 +57,7 @@ class Indexer:
         self._space = space
         self._classifier = classifier
         self._flush_chunks = max(1, flush_chunks)
+        self._imports = ImportScanner()
 
     async def run(
         self, *, only_root: str | None = None, force: bool = False, dry_run: bool = False
@@ -273,6 +275,7 @@ class Indexer:
             chunks=chunks,
             delta=delta,
             classification=classification,
+            imports=self._imports.scan(source.text or "", source.language or ""),
         )
 
     def _classify(self, source: SourceFile) -> Classification:
@@ -336,6 +339,7 @@ class Indexer:
         )
         self._manifest.forget_chunks(file.delta.to_delete, self._space.slug())
         self._manifest.record_chunks(file.chunks, self._space.slug())
+        self._manifest.record_imports(source.root_label, source.rel_path, file.imports)
         self._manifest.record_space(
             source.root_label, source.rel_path, self._space.slug(), len(file.chunks)
         )
