@@ -18,6 +18,7 @@ from tests.conftest import make_source
 from workspace_indexer.chunking.chunk_factory import build_chunk
 from workspace_indexer.classification import Classification
 from workspace_indexer.discovery.file_candidate import FileCandidate
+from workspace_indexer.graph import ImportEdge
 from workspace_indexer.models import Chunk, DocumentType, FileKind, RunStats, SourceFile
 from workspace_indexer.state.index_decision import IndexDecision
 from workspace_indexer.state.manifest import Manifest
@@ -787,3 +788,81 @@ def test_a_database_predating_the_price_columns_is_migrated(tmp_path: Path) -> N
         assert row.run_id == "old"
         assert row.unpriced_requests == 0
         assert row.tokens_embedded == 99
+
+
+def _edge(module: str, line: int = 1, kind: str = "import") -> ImportEdge:
+    return ImportEdge(module=module, kind=kind, is_relative=module.startswith("."), line=line)
+
+
+def _lang_source(rel_path: str, language: str) -> SourceFile:
+    return make_source("x = 1", rel_path=rel_path, language=language)
+
+
+def test_imports_round_trip(manifest: Manifest) -> None:
+    source = _source("repo/a.py")
+    manifest.record_file(source, chunker="code", chunker_version=1)
+    manifest.record_imports(
+        source.root_label, source.rel_path, [_edge("os"), _edge(".sib", line=2)]
+    )
+
+    edges = manifest.imports_of(source.root_label, source.rel_path)
+    assert [(e.module, e.line, e.is_relative) for e in edges] == [
+        ("os", 1, False),
+        (".sib", 2, True),
+    ]
+
+
+def test_recording_imports_replaces_rather_than_merges(manifest: Manifest) -> None:
+    """An import deleted from the source has to disappear from the graph."""
+    source = _source("repo/a.py")
+    manifest.record_file(source, chunker="code", chunker_version=1)
+    manifest.record_imports(source.root_label, source.rel_path, [_edge("os"), _edge("sys", 2)])
+    manifest.record_imports(source.root_label, source.rel_path, [_edge("os")])
+
+    assert [e.module for e in manifest.imports_of(source.root_label, source.rel_path)] == ["os"]
+
+
+def test_the_reverse_edge_finds_every_importer(manifest: Manifest) -> None:
+    """The half a per-project language server structurally cannot answer:
+    which files across the whole workspace reference this."""
+    for name in ("repo/a.py", "repo/b.py", "other/c.py"):
+        source = _source(name)
+        manifest.record_file(source, chunker="code", chunker_version=1)
+        module = "shared.util" if name != "other/c.py" else "unrelated"
+        manifest.record_imports(source.root_label, source.rel_path, [_edge(module)])
+
+    importers = manifest.importers_of("shared.util")
+    assert [rel for _, rel, _ in importers] == ["repo/a.py", "repo/b.py"]
+    assert manifest.importers_of("nobody.imports.this") == []
+
+
+def test_deleting_a_file_removes_its_edges(manifest: Manifest) -> None:
+    """Reverse edges are a query rather than stored state, so a deleted file
+    stops being an importer with no separate invalidation step."""
+    source = _source("repo/a.py")
+    manifest.record_file(source, chunker="code", chunker_version=1)
+    manifest.record_imports(source.root_label, source.rel_path, [_edge("shared.util")])
+    assert manifest.importers_of("shared.util")
+
+    manifest.forget_file(source.root_label, source.rel_path)
+    assert manifest.importers_of("shared.util") == []
+
+
+def test_coverage_separates_no_edges_from_no_extractor(manifest: Manifest) -> None:
+    """An empty graph answer is ambiguous, and the readings call for opposite
+    next moves: "nothing imports this" versus "nobody looked"."""
+    importing = _lang_source("repo/a.py", "python")
+    manifest.record_file(importing, chunker="code", chunker_version=1)
+    manifest.record_imports(importing.root_label, importing.rel_path, [_edge("os")])
+
+    standalone = _lang_source("repo/b.py", "python")
+    manifest.record_file(standalone, chunker="code", chunker_version=1)
+
+    styles = _lang_source("repo/a.scss", "scss")
+    manifest.record_file(styles, chunker="code", chunker_version=1)
+
+    coverage = manifest.import_coverage()
+    assert coverage["python"] == (1, 2)
+    # Present, at zero -- the caller decides what that means from the
+    # supported-language list, which is why both numbers are reported.
+    assert coverage["scss"] == (0, 1)
