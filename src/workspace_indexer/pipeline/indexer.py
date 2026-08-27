@@ -15,7 +15,8 @@ from workspace_indexer.discovery import Walker
 from workspace_indexer.discovery.file_candidate import FileCandidate
 from workspace_indexer.embedding.embedding_service import EmbeddingService
 from workspace_indexer.embedding.sparse_backend import SparseBackend
-from workspace_indexer.graph import ImportScanner
+from workspace_indexer.graph import ImportEdge, ImportScanner
+from workspace_indexer.graph.import_resolver import ImportResolver
 from workspace_indexer.models import EmbeddingSpace, RunStats, SourceFile
 from workspace_indexer.obs.context import bound, file_context, new_run_id
 from workspace_indexer.obs.logging import get_logger
@@ -193,6 +194,7 @@ class Indexer:
             for root_label, rel_path in purged:
                 await self._purge(root_label, rel_path, stats)
             await self._remove_orphans(seen, stats, only_root=only_root)
+            self._resolve_imports(stats)
 
     def _prepare(
         self, candidate: FileCandidate, stats: RunStats, *, force: bool
@@ -366,6 +368,37 @@ class Indexer:
                 self._manifest.forget_file(root_label, rel_path)
                 stats.chunks_deleted += len(ids)
                 log.info("file.removed", chunks=len(ids))
+
+    def _resolve_imports(self, stats: RunStats) -> None:
+        """Point each import edge at the file it names, where that is decidable.
+
+        After the walk rather than during it: an import can name a file that
+        has not been reached yet, so resolving per file would depend on walk
+        order and give different answers on different runs.
+        """
+        pending = self._manifest.unresolved_imports()
+        if not pending:
+            return
+
+        resolver = ImportResolver(self._manifest.files_by_unit())
+        resolved = 0
+        for root_label, rel_path, module, language, is_relative in pending:
+            edge = ImportEdge(module=module, kind="import", is_relative=is_relative, line=0)
+            target = resolver.resolve(
+                edge, from_path=rel_path, root_label=root_label, language=language
+            )
+            if target is not None:
+                self._manifest.set_resolved_path(root_label, rel_path, module, target)
+                resolved += 1
+
+        stats.imports_resolved = resolved
+        log.info(
+            "graph.resolved",
+            attempted=len(pending),
+            resolved=resolved,
+            detail="unresolved edges are packages, tsconfig aliases or C# "
+            "namespaces, which need more than the file list",
+        )
 
     def _chunker_version(self, kind: str) -> int:
         return self._registry.versions().get(_CHUNKER_FOR_KIND.get(kind, "text"), 1)

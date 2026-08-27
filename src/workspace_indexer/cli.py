@@ -593,6 +593,22 @@ def _print_import_coverage(ctx: AppContext) -> None:
         table.add_row(language, f"{files:,}", f"{with_edges:,} ({with_edges / files:.0%})")
     console.print(table)
 
+    resolution = ctx.manifest.resolution_coverage()
+    if resolution:
+        resolved_table = Table(title="import resolution")
+        for column in ("language", "edges", "resolved to a file"):
+            resolved_table.add_column(column)
+        for language in sorted(resolution):
+            done, total = resolution[language]
+            if total:
+                resolved_table.add_row(language, f"{total:,}", f"{done:,} ({done / total:.0%})")
+        console.print(resolved_table)
+        console.print(
+            "[dim]Unresolved edges are packages, tsconfig aliases and C# "
+            "namespaces — they need more than the file list, and are not "
+            "missing dependencies.[/dim]"
+        )
+
     unsupported = sorted(set(coverage) - IMPORT_LANGUAGES)
     if unsupported:
         console.print(
