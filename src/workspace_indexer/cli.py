@@ -29,6 +29,7 @@ from workspace_indexer.evaluation import (
     write_report,
 )
 from workspace_indexer.evaluation.search_retriever import Fusion
+from workspace_indexer.graph import SUPPORTED as IMPORT_LANGUAGES
 from workspace_indexer.mcp import QueryService, TaxonomyService
 from workspace_indexer.models import EmbeddingSpace, FileKind, RunStats, SearchFilters
 from workspace_indexer.search import Reprojector, SearchRequest
@@ -211,6 +212,7 @@ def status(config: ConfigOption = None) -> None:
                 )
             console.print(runs)
             _print_spend(ctx)
+            _print_import_coverage(ctx)
         finally:
             await ctx.close()
 
@@ -540,6 +542,36 @@ def watch(config: ConfigOption = None) -> None:
             await ctx.close()
 
     asyncio.run(run())
+
+
+def _print_import_coverage(ctx: AppContext) -> None:
+    """Which languages the dependency graph actually covers.
+
+    Reported because an empty answer from the graph is ambiguous, and the two
+    readings call for opposite next moves: "nothing imports this" is a fact,
+    "we have no extractor for this language" is a gap. A language absent from
+    this table has no edges because nobody looked.
+    """
+    coverage = ctx.manifest.import_coverage()
+    covered = {lang: pair for lang, pair in coverage.items() if lang in IMPORT_LANGUAGES}
+    if not covered:
+        return
+
+    table = Table(title="import graph coverage")
+    for column in ("language", "files", "with imports"):
+        table.add_column(column)
+    for language in sorted(covered):
+        with_edges, files = covered[language]
+        table.add_row(language, f"{files:,}", f"{with_edges:,} ({with_edges / files:.0%})")
+    console.print(table)
+
+    unsupported = sorted(set(coverage) - IMPORT_LANGUAGES)
+    if unsupported:
+        console.print(
+            f"[dim]No import extractor for: {', '.join(unsupported)}. "
+            "The graph has no edges for these, which is not the same as "
+            "their having none.[/dim]"
+        )
 
 
 def _cost_cell(stats: RunStats) -> str:

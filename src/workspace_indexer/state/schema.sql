@@ -66,6 +66,31 @@ CREATE TABLE IF NOT EXISTS chunks (
 CREATE INDEX IF NOT EXISTS chunks_by_file
     ON chunks (root_label, rel_path, space_slug);
 
+-- What each file imports, as the source wrote it. Unresolved on purpose:
+-- turning "@/hooks/useThing" into a file needs tsconfig paths and barrel
+-- resolution, which is a per-language project of its own.
+--
+-- Deliberately not in the vector payload. Reverse lookup -- "who imports this"
+-- -- is a relational question, and it is the half of a dependency graph that
+-- semantic search and a per-project language server both structurally cannot
+-- answer.
+CREATE TABLE IF NOT EXISTS imports (
+    root_label  TEXT    NOT NULL,
+    rel_path    TEXT    NOT NULL,
+    module      TEXT    NOT NULL,
+    kind        TEXT    NOT NULL,
+    is_relative INTEGER NOT NULL DEFAULT 0,
+    line        INTEGER NOT NULL,
+    PRIMARY KEY (root_label, rel_path, module, line),
+    FOREIGN KEY (root_label, rel_path) REFERENCES files (root_label, rel_path)
+        ON DELETE CASCADE
+);
+
+-- The reverse edge is the whole point, so the module column is indexed rather
+-- than scanned. Deleting a file cascades its rows away, which means "who
+-- imports X" stays correct without any separate invalidation step.
+CREATE INDEX IF NOT EXISTS imports_by_module ON imports (module);
+
 -- Run history, so "why did this cost $40" is answerable from the manifest
 -- rather than by scraping logs, and a cost regression is visible over time.
 CREATE TABLE IF NOT EXISTS runs (
