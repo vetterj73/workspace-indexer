@@ -9,19 +9,24 @@ those are the columns to check before reading a delta as a result. A
 find_guidance run over the eight guidance cases and a plain search run over all
 sixteen are both honest numbers, and comparing them is meaningless.
 
+`config` is the first eight characters of the configuration hash, and it covers
+the roots and exclusions as well as the embedding settings -- so rows in
+different `config` groups were measured over different corpora and do not
+compare, however similar the rest of the row looks.
+
 Query text is deliberately omitted. A document quoting the eval queries becomes
 a perfect match for them, which puts it at the top of its own results; the full
 per-case detail lives in `evals/*.json`.
 
-| recorded | embedding | dims | fusion | reranker | tool | cases | recall@k | MRR@k | misses |
-|---|---|---|---|---|---|---|---|---|---|
-| 2026-08-26T17:01:07 | `voyageai:voyage-code-4` | 1024 | rrf | `voyageai:rerank-2.5-lite` | search | all | 0.875 | 0.714 | 3/16 |
-| 2026-08-26T05:35:31 | `voyageai:voyage-code-4` | 1024 | rrf | `voyageai:rerank-2.5-lite` | search | all | 0.875 | 0.750 | 3/16 |
-| 2026-08-26T05:32:22 | `voyageai:voyage-code-4` | 1024 | rrf | `voyageai:rerank-2.5-lite` | find_guidance | guidance | 0.938 | 0.900 | 1/8 |
-| 2026-08-26T05:31:31 | `voyageai:voyage-code-4` | 1024 | rrf | `voyageai:rerank-2.5-lite` | find_guidance | guidance | 0.812 | 0.775 | 2/8 |
-| 2026-08-26T05:31:19 | `voyageai:voyage-code-4` | 1024 | rrf | `voyageai:rerank-2.5-lite` | search | guidance | 0.812 | 0.792 | 2/8 |
-| 2026-08-26T04:48:23 | `voyageai:voyage-code-4` | 1024 | rrf | `voyageai:rerank-2.5-lite` | search | all | 0.875 | 0.750 | 3/16 |
-| 2026-08-26T04:11:55 | `voyageai:voyage-code-4` | 1024 | rrf | `voyageai:rerank-2.5-lite` | search | all | 0.875 | 0.745 | 3/16 |
+| recorded | config | embedding | dims | fusion | reranker | tool | cases | recall@k | MRR@k | misses |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 2026-08-26T17:01:07 | `3cea112e` | `voyageai:voyage-code-4` | 1024 | rrf | `voyageai:rerank-2.5-lite` | search | all | 0.875 | 0.714 | 3/16 |
+| 2026-08-26T05:35:31 | `3cea112e` | `voyageai:voyage-code-4` | 1024 | rrf | `voyageai:rerank-2.5-lite` | search | all | 0.875 | 0.750 | 3/16 |
+| 2026-08-26T05:32:22 | `3cea112e` | `voyageai:voyage-code-4` | 1024 | rrf | `voyageai:rerank-2.5-lite` | find_guidance | guidance | 0.938 | 0.900 | 1/8 |
+| 2026-08-26T05:31:31 | `3cea112e` | `voyageai:voyage-code-4` | 1024 | rrf | `voyageai:rerank-2.5-lite` | find_guidance | guidance | 0.812 | 0.775 | 2/8 |
+| 2026-08-26T05:31:19 | `3cea112e` | `voyageai:voyage-code-4` | 1024 | rrf | `voyageai:rerank-2.5-lite` | search | guidance | 0.812 | 0.792 | 2/8 |
+| 2026-08-26T04:48:23 | `3cea112e` | `voyageai:voyage-code-4` | 1024 | rrf | `voyageai:rerank-2.5-lite` | search | all | 0.875 | 0.750 | 3/16 |
+| 2026-08-26T04:11:55 | `3cea112e` | `voyageai:voyage-code-4` | 1024 | rrf | `voyageai:rerank-2.5-lite` | search | all | 0.875 | 0.745 | 3/16 |
 
 ## Ad hoc analysis
 

@@ -15,6 +15,8 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from workspace_indexer.config.workspace_config import WorkspaceConfig
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -97,17 +99,36 @@ class Settings(BaseSettings):
             exported.append(name)
         return exported
 
-    def config_hash(self) -> str:
+    def config_hash(self, config: WorkspaceConfig) -> str:
         """Fingerprint of everything that affects index *content*.
 
         Credentials and transport settings are excluded — rotating an API key
         should not look like a configuration change that invalidates an index.
+
+        `config` is required, not optional. This used to hash the embedding
+        settings alone while claiming to cover "everything that affects index
+        content", which left out the largest thing of all: *what was indexed*.
+        Two runs over entirely different corpora produced the same hash, so
+        `comparable_to` returned True and the delta between them was reported
+        as though it meant something. An optional parameter would have let that
+        back in through the default.
         """
         material = {
             "embedding_model": self.embedding_model,
             "embedding_dimensions": self.embedding_dimensions,
             "embedding_quantization": self.embedding_quantization,
             "sparse_model": self.sparse_model,
+            # Resolved, so `~/src` and `/home/me/src` are one corpus rather
+            # than two, and sorted so root order is not a change.
+            "roots": sorted(
+                f"{root.resolved_label}:{root.path.expanduser().resolve()}"
+                for root in config.workspace.roots
+            ),
+            # A file excluded is a file not indexed, which moves recall exactly
+            # as adding a root does.
+            "excludes": sorted(config.all_excludes),
+            "respect_gitignore": config.index.respect_gitignore,
+            "max_file_bytes": config.index.max_file_bytes,
         }
         blob = json.dumps(material, sort_keys=True).encode()
         return hashlib.sha256(blob).hexdigest()[:16]
