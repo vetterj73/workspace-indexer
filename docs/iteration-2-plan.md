@@ -325,19 +325,33 @@ proven by our own `ancestors` field, which is already a list under a `KEYWORD`
 index. So storing a single string now and a list later is a change in what we
 write, not a schema migration. Single-valued to start, with no trap.
 
-**Should the type appear in the embedded text? → still open, deliberately.**
-Testable with the eval harness once results are persisted (#1). Note it changes
-what is embedded but not chunk identity, since the header is excluded from
-`content_sha` — so trying it costs a re-embed and nothing else.
+**Should the type appear in the embedded text? → no. Measured.** [revised]
+
+Prefixing `# type: normative` to the context header makes retrieval *worse*,
+and worse by the largest margin on exactly the cases the idea was meant to
+help. Two full re-embeds of the workspace, ~2.6M tokens each:
+
+| slice | without type | with type |
+|---|---|---|
+| all 16 cases, plain search | **0.875** / 0.714 | 0.812 / 0.693 |
+| 8 guidance cases, plain search | **0.812** / 0.792 | 0.688 / 0.688 |
+| 8 guidance cases, `find_guidance` | 0.938 / **0.900** | 0.938 / 0.771 |
+
+*(recall@10 / MRR@10)*
+
+The explanation is that the line carries almost no information. `doc_type` has
+nine values across eleven thousand chunks, so `# type: implementation` appears
+on more than half of them. A token sequence that common does not discriminate
+between chunks; it makes them marginally *more* alike, which is the opposite of
+what a dense retriever needs. The payload filter already extracts the whole
+value of the classification, and it does so without touching the vector.
+
+The option survives as `chunking.embed_doc_type`, defaulting to false, so the
+finding is reproducible rather than folklore. Switching it needs `index
+--force`: the header is excluded from `content_sha`, so a normal run compares
+chunk ids, finds them identical, and re-embeds nothing.
 
 ## Remaining open questions
 
-- Where do `.claude/` files sit? They are instructions to an agent, which is
-  arguably `normative`, but they are about *how to work* rather than *what to
-  build*. Possibly a `meta` category; possibly `normative` is right.
-- Should `doc_type` be multi-valued? A document can be both a design record and
-  a convention. Single-valued is simpler and probably correct to start, but the
-  payload field should not make multi-valued impossible later.
-- Does the classification belong in the embedded text as well as the payload —
-  would prefixing `# type: normative` to the context header improve dense
-  retrieval, or just add noise? Testable with the eval harness.
+None. All three are answered above.
+

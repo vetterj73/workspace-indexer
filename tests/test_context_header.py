@@ -9,7 +9,11 @@ otherwise unchanged workspace.
 from __future__ import annotations
 
 from tests.conftest import make_source
-from workspace_indexer.chunking.context_header import apply_header, build_header
+from workspace_indexer.chunking.context_header import (
+    apply_header,
+    build_header,
+    header_token_cost,
+)
 from workspace_indexer.models import FileKind, RepoInfo
 
 REPO = RepoInfo(name="workspace-indexer", branch="main", head_sha="a" * 40)
@@ -86,3 +90,25 @@ def test_header_cost_scales_with_the_header_that_will_be_built() -> None:
         rel_path="src/deeply/nested/module/path/implementation.py",
     )
     assert header_token_cost(long, FileKind.CODE) > header_token_cost(short, FileKind.CODE)
+
+
+def test_the_type_is_absent_unless_the_file_carries_one() -> None:
+    """Off by default, so an untyped file's header is byte-identical to what
+    it was before the option existed."""
+    file = make_source("x = 1", kind=FileKind.CODE, language="python", rel_path="a/b.py")
+    assert "# type:" not in build_header(file, "Cls.method", "method")
+
+
+def test_the_type_appears_when_the_file_carries_one() -> None:
+    file = make_source(
+        "x = 1", kind=FileKind.CODE, language="python", rel_path="a/b.py"
+    ).model_copy(update={"doc_type": "normative"})
+    assert "# type: normative" in build_header(file, "Cls.method", "method")
+
+
+def test_the_reservation_tracks_whether_a_type_will_be_emitted() -> None:
+    """Probing with a synthetic type would shrink every file's source budget
+    even with the option off, which is silent truncation for no benefit."""
+    file = make_source("x = 1", kind=FileKind.CODE, language="python", rel_path="a/b.py")
+    typed = file.model_copy(update={"doc_type": "implementation"})
+    assert header_token_cost(typed, FileKind.CODE) > header_token_cost(file, FileKind.CODE)

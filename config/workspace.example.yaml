@@ -50,6 +50,18 @@ index:
     - "**/tests/test_file_reader.py"
 
 chunking:
+  # Prefix `# type: normative` to the context header, so the embedder sees the
+  # classification and not only the payload filter does.
+  #
+  # False on measured evidence: it made recall@10 worse (0.875 -> 0.812), and
+  # worst on the guidance cases the idea was meant to help. `doc_type` has nine
+  # values across thousands of chunks, so the line carries almost no
+  # discriminating signal and makes chunks marginally more alike. See
+  # docs/iteration-2-plan.md.
+  #
+  # Changing it needs `index --force`: the header is excluded from content_sha,
+  # so a normal run finds identical chunk ids and re-embeds nothing.
+  embed_doc_type: false
   code:
     max_tokens: 512
     min_tokens: 24

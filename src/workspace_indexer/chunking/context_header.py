@@ -28,6 +28,13 @@ def build_header(file: SourceFile, symbol_path: str | None, symbol_kind: str | N
     if file.language:
         lines.append(f"# language: {file.language}")
 
+    # Only present when `chunking.embed_doc_type` is on. Whether telling the
+    # embedder that a document is normative helps retrieval or just adds a
+    # token of noise to every chunk is an empirical question -- see
+    # docs/iteration-2-plan.md for the answer this produced.
+    if file.doc_type:
+        lines.append(f"# type: {file.doc_type}")
+
     if symbol_path:
         label = symbol_kind.lower() if symbol_kind else "symbol"
         lines.append(f"# {label}: {symbol_path}")
@@ -46,6 +53,9 @@ def header_token_cost(file: SourceFile, kind: FileKind) -> int:
     Uses a worst-case symbol line, since the real symbol is not known until
     after the split has been decided.
     """
+    # Built from the file as it stands, so a type line is reserved for exactly
+    # when one will be emitted. Probing with a synthetic type would shrink
+    # every file's source budget even with embed_doc_type off.
     probe = build_header(file, "Some.Reasonably.Long.Symbol.Path", "function")
     return estimate_tokens(probe, kind)
 
