@@ -229,13 +229,17 @@ class Indexer:
         log.debug("file.decision", decision=decision.value, sha=source.sha256[:12])
         stats.files_changed += 1
 
-        chunker = self._registry.resolve(source, self._config.chunking)
-        chunks = list(chunker.chunk(source, self._config.chunking))
-
-        # Classify once per file and stamp every chunk with the verdict. Done
-        # here rather than inside the chunkers, which have no business knowing
-        # what role a document plays -- their concern is how to split it.
+        # Classify once per file. Done here rather than inside the chunkers,
+        # which have no business knowing what role a document plays -- their
+        # concern is how to split it.
         classification = self._classify(source)
+
+        chunker = self._registry.resolve(source, self._config.chunking)
+        if self._config.chunking.embed_doc_type:
+            # The header is built during chunking, so the verdict has to be on
+            # the file before the split rather than stamped on afterwards.
+            source = source.model_copy(update={"doc_type": classification.doc_type.value})
+        chunks = list(chunker.chunk(source, self._config.chunking))
         chunks = [
             chunk.model_copy(
                 update={

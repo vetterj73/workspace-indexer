@@ -581,3 +581,40 @@ async def test_deleting_a_file_removes_it_from_the_graph(harness: Harness, works
     target.unlink()
     await harness.indexer().run()
     assert harness.manifest.importers_of("shared_thing") == []
+
+
+async def test_doc_type_reaches_the_embedded_text_when_enabled(harness: Harness) -> None:
+    """The header is built during chunking, so the verdict has to be on the
+    file before the split rather than stamped on afterwards."""
+    harness.config.chunking.embed_doc_type = True
+    await harness.indexer().run()
+
+    embedded = "\n".join(text for batch in harness.backend.batches for text in batch)
+    assert "# type:" in embedded
+
+
+async def test_doc_type_stays_out_of_the_embedded_text_by_default(
+    harness: Harness,
+) -> None:
+    await harness.indexer().run()
+    embedded = "\n".join(text for batch in harness.backend.batches for text in batch)
+    assert "# type:" not in embedded
+
+
+async def test_the_option_does_not_change_chunk_identity(harness: Harness) -> None:
+    """The header is excluded from content_sha, so turning this on is a
+    re-embed and not a re-chunk.
+
+    That is precisely why switching it needs `index --force`: a normal run
+    compares chunk ids, finds them identical, and embeds nothing.
+    """
+    target = ("workspace", "repo_one/src/widget.py", SPACE.slug())
+    await harness.indexer().run()
+    before = set(harness.manifest.chunk_ids_for(*target))
+
+    harness.config.chunking.embed_doc_type = True
+    stats = await harness.indexer().run()
+
+    assert set(harness.manifest.chunk_ids_for(*target)) == before
+    # Nothing re-embedded, which is the trap the docs have to warn about.
+    assert stats.chunks_upserted == 0

@@ -25,3 +25,7 @@ class SourceFile(BaseModel):
     repo: RepoInfo | None = None
     # None for OPAQUE/IMAGE: those are never read into memory.
     text: str | None = None
+    # Set before chunking when the type is to be embedded, so build_header can
+    # see it. Classification is a property of the file, not of a chunk, which
+    # is why it belongs here rather than being threaded through every chunker.
+    doc_type: str | None = None
