@@ -23,6 +23,7 @@ from workspace_indexer.mcp.query_service import QueryService
 from workspace_indexer.mcp.search_response import SearchResponse
 from workspace_indexer.mcp.taxonomy import Taxonomy
 from workspace_indexer.mcp.taxonomy_service import TaxonomyService
+from workspace_indexer.mcp.tool_call_recorder import ToolCallRecorder
 from workspace_indexer.mcp.unknown_document_type_error import UnknownDocumentTypeError
 from workspace_indexer.models import DocumentType
 
@@ -53,6 +54,10 @@ def build_query_service(ctx: AppContext) -> QueryService:
         search=ctx.search_service(),
         taxonomy=TaxonomyService(ctx.store, ctx.space),
         check_staleness=ctx.config.search.check_staleness,
+        # The manifest is the harvesting sink: finding the calls that returned
+        # nothing is a query rather than a log scrape, and those calls are eval
+        # cases waiting to be written.
+        recorder=ToolCallRecorder(ctx.manifest),
     )
 
 

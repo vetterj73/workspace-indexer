@@ -213,6 +213,7 @@ def status(config: ConfigOption = None) -> None:
             console.print(runs)
             _print_spend(ctx)
             _print_import_coverage(ctx)
+            _print_tool_calls(ctx)
         finally:
             await ctx.close()
 
@@ -542,6 +543,33 @@ def watch(config: ConfigOption = None) -> None:
             await ctx.close()
 
     asyncio.run(run())
+
+
+def _print_tool_calls(ctx: AppContext) -> None:
+    """What agents actually asked, and how often they got nothing.
+
+    The empty column is the point. Those calls are eval cases waiting to be
+    written -- queries a real agent asked that this index could not answer,
+    which is a better source than any dataset written from imagination.
+    """
+    stats = ctx.manifest.tool_call_stats()
+    if not stats:
+        return
+
+    table = Table(title="mcp tool calls")
+    for column in ("tool", "calls", "returned nothing"):
+        table.add_column(column)
+    for tool in sorted(stats):
+        calls, empty = stats[tool]
+        table.add_row(tool, f"{calls:,}", f"{empty:,} ({empty / calls:.0%})")
+    console.print(table)
+
+    unanswered = ctx.manifest.tool_calls(limit=3, disappointing_only=True)
+    if unanswered:
+        console.print("[dim]Recent calls worth turning into eval cases:[/dim]")
+        for call in unanswered:
+            reason = "nothing found" if not call.returned else f"{call.dropped_for_budget} dropped"
+            console.print(f"[dim]  {call.tool}: {call.query[:60]!r} — {reason}[/dim]")
 
 
 def _print_import_coverage(ctx: AppContext) -> None:

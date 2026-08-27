@@ -12,6 +12,7 @@ out entirely.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
@@ -21,7 +22,7 @@ from types import TracebackType
 from workspace_indexer.classification import Classification
 from workspace_indexer.discovery.file_candidate import FileCandidate
 from workspace_indexer.graph.import_edge import ImportEdge
-from workspace_indexer.models import Chunk, DocumentType, RunStats, SourceFile
+from workspace_indexer.models import Chunk, DocumentType, RunStats, SourceFile, ToolCall
 from workspace_indexer.obs.logging import get_logger
 from workspace_indexer.state.chunk_delta import ChunkDelta
 from workspace_indexer.state.file_record import FileRecord
@@ -534,6 +535,62 @@ class Manifest:
                 stats.run_id,
             ),
         )
+
+    def record_tool_call(self, call: ToolCall) -> None:
+        """Append one MCP tool call. Never updates -- each call is an event."""
+        self._db.execute(
+            "INSERT INTO mcp_calls (called_at, tool, query, parameters, returned, "
+            "returned_paths, total_matches, dropped_for_budget, note, duration_ms) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                datetime.now(UTC).isoformat(),
+                call.tool,
+                call.query,
+                json.dumps(call.parameters, sort_keys=True),
+                call.returned,
+                json.dumps(call.returned_paths),
+                call.total_matches,
+                call.dropped_for_budget,
+                call.note,
+                call.duration_ms,
+            ),
+        )
+        self._db.commit()
+
+    def tool_calls(self, limit: int = 50, *, disappointing_only: bool = False) -> list[ToolCall]:
+        """Recent calls, newest first.
+
+        `disappointing_only` is the harvesting filter: calls that returned
+        nothing, or had to drop results to fit. Those are the ones worth
+        turning into eval cases.
+        """
+        where = "WHERE returned = 0 OR dropped_for_budget > 0" if disappointing_only else ""
+        rows = self._db.execute(
+            f"SELECT * FROM mcp_calls {where} ORDER BY called_at DESC LIMIT ?",  # noqa: S608
+            (limit,),
+        )
+        return [
+            ToolCall(
+                tool=str(r["tool"]),
+                query=str(r["query"]),
+                parameters=json.loads(str(r["parameters"])),
+                returned_paths=json.loads(str(r["returned_paths"])),
+                total_matches=int(r["total_matches"]),
+                dropped_for_budget=int(r["dropped_for_budget"]),
+                note=r["note"],
+                duration_ms=float(r["duration_ms"]),
+            )
+            for r in rows
+        ]
+
+    def tool_call_stats(self) -> dict[str, tuple[int, int]]:
+        """Per tool: total calls, and how many returned nothing."""
+        rows = self._db.execute(
+            "SELECT tool, COUNT(*) AS n, "
+            "SUM(CASE WHEN returned = 0 THEN 1 ELSE 0 END) AS empty "
+            "FROM mcp_calls GROUP BY tool"
+        )
+        return {str(r["tool"]): (int(r["n"]), int(r["empty"] or 0)) for r in rows}
 
     def total_tokens_embedded(self) -> int:
         """Every token this manifest has paid to embed, across all runs.

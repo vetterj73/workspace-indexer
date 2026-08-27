@@ -259,6 +259,33 @@ specs.
 exist because clients differ in how reliably a model sees a resource the user
 has not attached, whereas a tool is always in context.
 
+### Recorded calls
+
+Every tool call is recorded twice: as an `mcp.tool_call` event in the rolling
+log, and as a row in the manifest's `mcp_calls` table. Both carry the tool,
+the parameters, the returned paths, `dropped_for_budget`, any note and the
+duration.
+
+`status` summarises them and names recent calls worth turning into eval cases.
+The harvesting query is the point:
+
+```sql
+SELECT tool, query, returned FROM mcp_calls
+WHERE returned = 0 OR dropped_for_budget > 0
+ORDER BY called_at DESC;
+```
+
+Those are queries a real agent asked that the index could not answer, which is
+a better source of eval cases than any dataset written from imagination.
+
+**What it cannot tell you.** A call that returns three confidently irrelevant
+results looks identical here to one that returns three good ones — only the
+count is recorded, not whether the answer was right. Empty and clipped
+responses are detectable; *wrong* ones still need a human or an eval.
+
+Recording never fails a call: if the manifest write raises, the log entry has
+already succeeded and the tool returns normally.
+
 ### Result shape
 
 Every result is `path:start-end` anchored, so the next action is a read with
