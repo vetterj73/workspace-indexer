@@ -62,6 +62,11 @@ chunking:
   # Changing it needs `index --force`: the header is excluded from content_sha,
   # so a normal run finds identical chunk ids and re-embeds nothing.
   embed_doc_type: false
+
+  # Pin an extension to a chunker when its detected language routes it
+  # somewhere unhelpful. The extension point for a new file type.
+  overrides: {}
+    # ".mdx": "markdown"
   code:
     max_tokens: 512
     min_tokens: 24
@@ -119,6 +124,16 @@ watch:
   reload_config: true
 
 logging:
+  # The rolling file sink. Always DEBUG regardless of the console level: the
+  # console is for watching, the file is for forensics, and you cannot
+  # retroactively raise a log level after the failure you needed to see.
+  #
+  # Size-based rather than daily rotation, because indexer output is bursty --
+  # a full reindex produces a huge volume in minutes, then near-silence.
+  file:
+    path: ./logs/workspace-indexer.jsonl
+    max_bytes: 20_971_520      # 20 MB x 10 backups = a 200 MB ceiling
+    backup_count: 10
   level: INFO
   console: pretty        # pretty | json | off
   file:

@@ -120,6 +120,13 @@ Qdrant must be in server mode (`QDRANT_MODE=server`). Embedded Qdrant takes an
 exclusive lock on its storage directory, and indexing from another terminal
 would fail for as long as the agent is connected.
 
+## Reference
+
+**[docs/reference.md](docs/reference.md)** is the lookup page: every command
+and flag, every `workspace.yaml` key and `.env` variable with its default, and
+every MCP tool with its parameters. A test asserts it lists everything that
+exists, so it cannot quietly fall behind the code.
+
 ## Running it somewhere else
 
 This README is a developer quickstart. **[docs/deployment.md](docs/deployment.md)**
