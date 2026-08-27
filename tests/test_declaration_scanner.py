@@ -71,11 +71,27 @@ def test_line_numbers_are_one_based(scanner: DeclarationScanner) -> None:
     assert found[0].start_line == 3
 
 
+# A declaration in each language, so a listed language with a broken grammar
+# fails here rather than silently reporting nothing forever.
+_SMOKE = {
+    "javascript": "const A = () => 1;",
+    "typescript": "const A = () => 1;",
+    "tsx": "const A = () => 1;",
+    "bicep": "resource A 'Microsoft.KeyVault/vaults@2023-02-01' = { name: 'x' }",
+    "powershell": "function A { }",
+}
+
+
 @pytest.mark.parametrize("language", sorted(SUPPORTED))
 def test_every_supported_language_actually_parses(
     scanner: DeclarationScanner, language: str
 ) -> None:
-    assert _names(scanner, "const A = () => 1;", language) == ["A"]
+    assert _names(scanner, _SMOKE[language], language) == ["A"]
+
+
+def test_the_smoke_cases_cover_every_supported_language() -> None:
+    """Otherwise adding a language silently skips its own smoke test."""
+    assert set(_SMOKE) == set(SUPPORTED)
 
 
 def test_unsupported_languages_do_no_work(scanner: DeclarationScanner) -> None:
@@ -90,3 +106,84 @@ def test_empty_and_broken_input_do_not_raise(scanner: DeclarationScanner) -> Non
     assert scanner.scan("", "tsx") == []
     # Half-typed code is a normal thing to index; tree-sitter recovers.
     assert isinstance(scanner.scan("const A = () => { const", "tsx"), list)
+
+
+# --- bicep ---------------------------------------------------------------
+
+BICEP = """\
+param location string = resourceGroup().location
+var prefix = 'app'
+resource keyVault 'Microsoft.KeyVault/vaults@2023-02-01' = {
+  name: '${prefix}-kv'
+}
+module network './network.bicep' = { name: 'net' }
+output vaultUri string = keyVault.properties.vaultUri
+"""
+
+
+def test_bicep_resources_are_named(scanner: DeclarationScanner) -> None:
+    """ "Where is the Key Vault defined" is a real infrastructure question, and
+    bicep chunks carried no symbol at all before this."""
+    found = {d.name: d.kind for d in scanner.scan(BICEP, "bicep")}
+    assert found["keyVault"] == "resource"
+    assert found["network"] == "module"
+
+
+def test_bicep_params_vars_and_outputs_are_named(scanner: DeclarationScanner) -> None:
+    found = {d.name: d.kind for d in scanner.scan(BICEP, "bicep")}
+    assert found["location"] == "param"
+    assert found["prefix"] == "var"
+    assert found["vaultUri"] == "output"
+
+
+def test_a_bicep_resource_spans_its_whole_body(scanner: DeclarationScanner) -> None:
+    """The span is what lets a chunk inside a long resource block inherit its
+    name rather than coming back unlabelled."""
+    resource = next(d for d in scanner.scan(BICEP, "bicep") if d.name == "keyVault")
+    assert resource.start_line == 3
+    assert resource.end_line == 5
+    assert resource.contains(4)
+
+
+# --- powershell ----------------------------------------------------------
+
+
+def test_powershell_functions_are_named(scanner: DeclarationScanner) -> None:
+    code = "function Get-Remittance {\n  param($Id)\n}\n"
+    assert [(d.name, d.kind) for d in scanner.scan(code, "powershell")] == [
+        ("Get-Remittance", "function")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("code", "name"),
+    [
+        ("filter Format-Row { $_ }", "Format-Row"),
+        ("workflow Deploy-All { }", "Deploy-All"),
+    ],
+)
+def test_filter_and_workflow_are_functions_too(
+    scanner: DeclarationScanner, code: str, name: str
+) -> None:
+    """The grammar reports all three as function_statement."""
+    assert [d.name for d in scanner.scan(code, "powershell")] == [name]
+
+
+def test_powershell_classes_and_methods(scanner: DeclarationScanner) -> None:
+    code = "class Employer {\n  [void] Save() { }\n}\n"
+    found = {d.name: d.kind for d in scanner.scan(code, "powershell")}
+    assert found == {"Employer": "class", "Save": "method"}
+
+
+def test_a_script_with_no_declarations_yields_none(scanner: DeclarationScanner) -> None:
+    """Most deployment scripts are a sequence of top-level commands with
+    nothing to name. Measured: 13 of 17 real .ps1 files contain no function at
+    all, which is why powershell attribution stays low and should."""
+    code = '$ErrorActionPreference = "Stop"\naz stack sub create -n Thing\n'
+    assert scanner.scan(code, "powershell") == []
+
+
+def test_javascript_behaviour_is_unchanged(scanner: DeclarationScanner) -> None:
+    """The per-language split must not disturb the languages already at 82%."""
+    code = "const Cart = () => 1;\nconst config = { a: 1 };\n"
+    assert _names(scanner, code, "tsx") == ["Cart"]

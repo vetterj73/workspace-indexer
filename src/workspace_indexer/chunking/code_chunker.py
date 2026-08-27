@@ -57,7 +57,8 @@ class CodeChunker:
     # 2: arrow-function and class-property declarations are attributed, which
     #    changes symbol_path on JS/TS chunks and so must force a re-chunk.
     # 3: files whose parse is mostly error nodes fall back to text chunking.
-    version = 3
+    # 4: bicep and powershell declarations are attributed.
+    version = 4
     kinds = frozenset({FileKind.CODE})
 
     def __init__(self, workspace: str, fallback: TextChunker) -> None:

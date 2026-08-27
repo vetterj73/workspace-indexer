@@ -32,10 +32,38 @@ log = get_logger("workspace_indexer.chunking.declarations")
 # language that does not need it would cost a second parse for nothing.
 # No "jsx" entry: there is no jsx grammar, and `.jsx` files are classified
 # as javascript. Listing it would only ever log a download failure.
-SUPPORTED = frozenset({"javascript", "typescript", "tsx"})
+_JS = frozenset({"javascript", "typescript", "tsx"})
+
+# Languages whose declarations the symbol extractor does not report. bicep and
+# powershell parse cleanly and return no symbols at all -- not a parse failure,
+# so the error-node fallback cannot help them. Their constructs simply are not
+# functions, which is what `process()` looks for.
+SUPPORTED = _JS | frozenset({"bicep", "powershell"})
 
 # The declaration shapes that hold a callable.
 _CALLABLE = frozenset({"arrow_function", "function_expression"})
+
+# Bicep is unusually regular: every declaration is `<thing>_declaration` with
+# an `identifier` child. `resource` is the one that matters -- "where is the
+# Key Vault defined" is a real infrastructure question -- but params and
+# outputs are named targets too, and the overlap rule picks the tightest.
+_BICEP: dict[str, str] = {
+    "resource_declaration": "resource",
+    "module_declaration": "module",
+    "parameter_declaration": "param",
+    "output_declaration": "output",
+    "variable_declaration": "var",
+}
+
+# `function_statement` covers `function`, `filter` and `workflow` alike.
+_POWERSHELL: dict[str, str] = {
+    "function_statement": "function",
+    "class_statement": "class",
+    "class_method_definition": "method",
+}
+
+# Where each of those keeps its name.
+_NAME_NODES = frozenset({"identifier", "function_name", "simple_name"})
 
 
 class DeclarationScanner:
@@ -54,18 +82,45 @@ class DeclarationScanner:
             return []
 
         found: list[Declaration] = []
-        _walk(tree.root_node, found)
+        _walk(tree.root_node, language, found)
         return found
 
 
-def _walk(node: Node, out: list[Declaration]) -> None:
-    if node.type == "variable_declarator":
-        _record(node, "name", "function", out)
-    elif node.type == "public_field_definition":
-        # A class property holding an arrow function: `fetchAll = async () => {}`
-        _record(node, "name", "method", out)
+def _walk(node: Node, language: str, out: list[Declaration]) -> None:
+    if language in _JS:
+        if node.type == "variable_declarator":
+            _record(node, "name", "function", out)
+        elif node.type == "public_field_definition":
+            # A class property holding an arrow function:
+            # `fetchAll = async () => {}`
+            _record(node, "name", "method", out)
+    else:
+        kinds = _BICEP if language == "bicep" else _POWERSHELL
+        kind = kinds.get(node.type)
+        if kind is not None:
+            _record_named(node, kind, out)
     for child in node.children:
-        _walk(child, out)
+        _walk(child, language, out)
+
+
+def _record_named(node: Node, kind: str, out: list[Declaration]) -> None:
+    """Bicep and PowerShell put the name in the first name-shaped child.
+
+    No callable check here, unlike JavaScript: `resource keyVault '...'` and
+    `function Get-Thing` are definitions by construction, so there is no
+    `const config = {...}` case to exclude.
+    """
+    name_node = next((c for c in node.children if c.type in _NAME_NODES), None)
+    if name_node is None or name_node.text is None:
+        return
+    out.append(
+        Declaration(
+            name=name_node.text.decode("utf-8", errors="replace"),
+            kind=kind,
+            start_line=node.start_point[0] + 1,
+            end_line=node.end_point[0] + 1,
+        )
+    )
 
 
 def _record(node: Node, name_field: str, kind: str, out: list[Declaration]) -> None:
