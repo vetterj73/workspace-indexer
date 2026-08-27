@@ -1,0 +1,267 @@
+"""The dependency graph, as an agent sees it.
+
+Every test here runs against a real SQLite manifest holding a real graph.
+The queries are SQL and the joins are the thing that can be wrong, so a mocked
+manifest would assert our idea of the query rather than the query.
+
+The failure this file is mostly guarding against is not a wrong number. It is
+a *plausible* empty answer: an agent told "nothing imports this" about a file
+in an unscanned language, or about the wrong file, will delete working code.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+
+from tests.conftest import make_source
+from workspace_indexer.classification import Classification
+from workspace_indexer.graph import ImportEdge
+from workspace_indexer.mcp.impact_service import ImpactService
+from workspace_indexer.models import DocumentType, FileKind
+from workspace_indexer.state import Manifest
+
+ROOT = "workspace"
+
+
+@pytest.fixture
+def manifest(tmp_path: Path) -> Iterator[Manifest]:
+    with Manifest(tmp_path / "manifest.sqlite3") as m:
+        yield m
+
+
+def add_file(
+    manifest: Manifest,
+    rel_path: str,
+    *,
+    doc_type: DocumentType = DocumentType.IMPLEMENTATION,
+    language: str | None = "python",
+) -> None:
+    source = make_source(
+        "x",
+        kind=FileKind.CODE,
+        language=language,
+        rel_path=rel_path,
+        root_label=ROOT,
+        unit=rel_path.split("/")[0],
+    )
+    manifest.record_file(
+        source,
+        chunker="code",
+        chunker_version=1,
+        classification=Classification(doc_type=doc_type, confidence=1.0, reason="fixture"),
+        classifier_version=1,
+    )
+
+
+def add_import(
+    manifest: Manifest,
+    importer: str,
+    module: str,
+    *,
+    line: int = 1,
+    resolved: str | None = None,
+) -> None:
+    existing = manifest.imports_of(ROOT, importer)
+    manifest.record_imports(
+        ROOT,
+        importer,
+        [*existing, ImportEdge(module=module, kind="import", is_relative=True, line=line)],
+    )
+    if resolved:
+        manifest.set_resolved_path(ROOT, importer, module, resolved)
+
+
+@pytest.fixture
+def graph(manifest: Manifest) -> Manifest:
+    """One target imported by a caller and two tests, plus a decoy.
+
+    The decoy (`legacy/helper.py`) exists so that suffix matching has something
+    to be wrong about.
+    """
+    add_file(manifest, "app/src/helper.py")
+    add_file(manifest, "app/src/service.py")
+    add_file(manifest, "app/tests/test_helper.py", doc_type=DocumentType.TEST)
+    add_file(manifest, "app/tests/test_service.py", doc_type=DocumentType.TEST)
+    add_file(manifest, "legacy/helper.py")
+
+    add_import(manifest, "app/src/service.py", "./helper", line=3, resolved="app/src/helper.py")
+    add_import(
+        manifest, "app/tests/test_helper.py", "app.src.helper", line=5, resolved="app/src/helper.py"
+    )
+    add_import(
+        manifest,
+        "app/tests/test_service.py",
+        "app.src.helper",
+        line=7,
+        resolved="app/src/helper.py",
+    )
+    # An edge we cannot follow: names a package, not a file in the index.
+    add_import(manifest, "app/src/helper.py", "httpx", line=1)
+    add_import(manifest, "app/src/helper.py", "./service", line=2, resolved="app/src/service.py")
+    return manifest
+
+
+def test_used_by_spans_the_whole_workspace(graph: Manifest) -> None:
+    report = ImpactService(graph).impact_of("app/src/helper.py")
+
+    assert report.used_by_total == 3
+    assert [d.location for d in report.used_by] == [
+        "app/src/service.py:3",
+        "app/tests/test_helper.py:5",
+        "app/tests/test_service.py:7",
+    ]
+
+
+def test_dependents_are_counted_by_document_type(graph: Manifest) -> None:
+    """The synthesis the graph alone cannot give: "one caller and two tests".
+
+    This is the line an agent acts on without reading the list.
+    """
+    report = ImpactService(graph).impact_of("app/src/helper.py")
+    assert report.used_by_by_type == {"test": 2, "implementation": 1}
+
+
+def test_callers_are_kept_ahead_of_tests_when_truncating(graph: Manifest) -> None:
+    """What breaks matters more than what notices it broke."""
+    report = ImpactService(graph).impact_of("app/src/helper.py", limit=1)
+
+    assert [d.rel_path for d in report.used_by] == ["app/src/service.py"]
+    assert report.dropped_used_by == 2
+    # ...and the counts still describe all three, not the one that fitted.
+    assert report.used_by_by_type == {"test": 2, "implementation": 1}
+    assert report.note is not None and "omitted" in report.note
+
+
+def test_an_unfollowable_import_is_listed_not_dropped(graph: Manifest) -> None:
+    """Reporting a file as importing less than it does is the worse lie."""
+    report = ImpactService(graph).impact_of("app/src/helper.py")
+
+    modules = {d.module: d for d in report.depends_on}
+    assert modules["httpx"].resolved is False
+    assert modules["httpx"].rel_path is None
+    assert modules["./service"].resolved is True
+    assert modules["./service"].rel_path == "app/src/service.py"
+    assert report.note is not None and "outside the index" in report.note
+
+
+def test_an_ambiguous_path_is_not_guessed(graph: Manifest) -> None:
+    """Two files end with `helper.py`. Answering for one of them would tell the
+    agent that nothing imports a file it never asked about."""
+    report = ImpactService(graph).impact_of("helper.py")
+
+    assert report.rel_path == ""
+    assert report.used_by == []
+    assert sorted(report.candidates) == ["app/src/helper.py", "legacy/helper.py"]
+    assert report.note is not None and "Nothing was guessed" in report.note
+
+
+def test_a_full_path_wins_over_being_a_suffix_of_another(manifest: Manifest) -> None:
+    add_file(manifest, "helper.py")
+    add_file(manifest, "app/helper.py")
+    add_import(manifest, "app/helper.py", "./x", line=1)
+
+    report = ImpactService(manifest).impact_of("helper.py")
+    assert report.rel_path == "helper.py"
+    assert report.candidates == []
+
+
+def test_a_suffix_only_matches_on_a_directory_boundary(manifest: Manifest) -> None:
+    """`store.py` must not match `my_store.py`. A silently wrong file is worse
+    than no answer."""
+    add_file(manifest, "app/my_store.py")
+
+    report = ImpactService(manifest).impact_of("store.py")
+    assert report.rel_path == ""
+    assert report.candidates == []
+    assert report.note is not None and "No indexed file matches" in report.note
+
+
+def test_an_unscanned_language_says_so_rather_than_reporting_zero(
+    manifest: Manifest,
+) -> None:
+    """The whole reason this tool carries a note.
+
+    A .bicep file has no import scanner, so both lists are empty for a reason
+    that has nothing to do with the file. Read as "nothing depends on this",
+    that is a licence to delete it.
+    """
+    add_file(manifest, "infra/main.bicep", language="bicep")
+
+    report = ImpactService(manifest).impact_of("infra/main.bicep")
+
+    assert report.used_by_total == 0
+    assert report.note is not None
+    assert "not scanned for bicep" in report.note
+    assert "says nothing about whether anything depends" in report.note
+
+
+def test_a_scanned_language_with_no_dependents_explains_the_gap(
+    manifest: Manifest,
+) -> None:
+    """Zero here is a real measurement, but still not proof of no dependants:
+    an import spelled as a package name is recorded and never resolved."""
+    add_file(manifest, "app/orphan.py")
+
+    report = ImpactService(manifest).impact_of("app/orphan.py")
+
+    assert report.used_by_total == 0
+    assert report.note is not None
+    assert "No indexed file resolves an import to this one" in report.note
+    assert "not scanned" not in report.note
+
+
+def test_the_call_is_recorded_for_harvesting(graph: Manifest) -> None:
+    """Same contract as the search tools: a call that disappointed is an eval
+    case waiting to be written, and finding it must be a query."""
+    from workspace_indexer.mcp.tool_call_recorder import ToolCallRecorder
+
+    ImpactService(graph, recorder=ToolCallRecorder(graph)).impact_of("app/src/helper.py")
+
+    calls = graph.tool_calls()
+    assert [c.tool for c in calls] == ["impact_of"]
+    assert calls[0].query == "app/src/helper.py"
+    assert "app/src/service.py" in calls[0].returned_paths
+
+
+def test_deleting_a_file_removes_its_edges(graph: Manifest) -> None:
+    """The cascade is what keeps "who imports this" correct with no separate
+    invalidation step."""
+    service = ImpactService(graph)
+    assert service.impact_of("app/src/helper.py").used_by_total == 3
+
+    graph.forget_file(ROOT, "app/tests/test_helper.py")
+
+    report = service.impact_of("app/src/helper.py")
+    assert report.used_by_total == 2
+    assert report.used_by_by_type == {"implementation": 1, "test": 1}
+
+
+def test_a_re_export_importer_is_flagged_as_a_hop(manifest: Manifest) -> None:
+    """Measured against the live index, not imagined.
+
+    `result_budget.py` reported two dependents while `test_result_budget.py`
+    plainly uses it -- because that test imports the package, so the edge lands
+    on `__init__.py`. The graph is right and the number is misleading, which is
+    the one combination a note has to cover.
+    """
+    add_file(manifest, "app/src/thing.py")
+    add_file(manifest, "app/src/__init__.py")
+    add_import(manifest, "app/src/__init__.py", "./thing", line=1, resolved="app/src/thing.py")
+
+    report = ImpactService(manifest).impact_of("app/src/thing.py")
+
+    assert report.used_by_total == 1
+    assert report.note is not None
+    assert "re-export files" in report.note
+    assert "app/src/__init__.py" in report.note
+    assert "the real number of callers is higher" in report.note
+
+
+def test_a_plain_importer_is_not_flagged_as_a_hop(graph: Manifest) -> None:
+    """The warning has to be absent when it does not apply, or it becomes
+    noise the agent learns to skip."""
+    report = ImpactService(graph).impact_of("app/src/helper.py")
+    assert report.note is not None and "re-export" not in report.note

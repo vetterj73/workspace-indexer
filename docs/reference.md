@@ -253,6 +253,39 @@ parameters. A type reported at **count 0** genuinely has none in this
 workspace: if `normative` is 0, read the implementation instead of hunting for
 specs.
 
+**`impact_of`** — what one file imports, and what imports it. Answers from the
+manifest alone: no embedding call, no vector search.
+
+| parameter | type | default | |
+|---|---|---|---|
+| `rel_path` | string | required | A path from a search result, or a trailing portion of one. |
+| `limit` | integer 1–200 | `25` | Maximum edges **per direction**. |
+
+`used_by` is the half that is expensive to get any other way — it spans every
+repository in the workspace — and each entry is anchored as `path:line` at the
+import statement. `used_by_by_type` counts every dependent by document type
+over the whole result rather than the page that fitted, so `{"test": 3,
+"implementation": 1}` tells you a signature change breaks one caller and three
+tests without reading the list.
+
+An ambiguous path is **never guessed**. Two files ending in `store.py` come
+back as `candidates` with an empty report, because answering for the wrong one
+tells an agent that nothing imports a file it never asked about.
+
+Read `note` before concluding anything from a small or empty result. It
+distinguishes the three ways this tool can be silent for reasons that have
+nothing to do with the file:
+
+- The language has no import scanner (`bicep`, `powershell`, HTML, CSS). Both
+  lists are then empty by construction.
+- Every edge naming the file is spelled as a package, a build alias or a C#
+  namespace, none of which resolve to a path.
+- An importer is a **re-export file** (`__init__.py`, `index.ts`). That edge is
+  a hop, not a destination: whatever imports the symbol *through* the barrel is
+  not counted, so the real caller count is higher. Run `impact_of` on the
+  barrel to follow the next hop. This project's own one-class-per-file mandate
+  guarantees the case, and TypeScript barrels behave identically.
+
 ### Resource
 
 `workspace-indexer://taxonomy` serves the same taxonomy as JSON. Both surfaces

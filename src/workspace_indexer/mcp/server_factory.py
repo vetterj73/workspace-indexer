@@ -19,6 +19,8 @@ from pydantic import Field
 from workspace_indexer.app_context import AppContext
 from workspace_indexer.mcp.document_type_resolver import DocumentTypeResolver
 from workspace_indexer.mcp.empty_index_error import EmptyIndexError
+from workspace_indexer.mcp.impact_report import ImpactReport
+from workspace_indexer.mcp.impact_service import ImpactService
 from workspace_indexer.mcp.query_service import QueryService
 from workspace_indexer.mcp.search_response import SearchResponse
 from workspace_indexer.mcp.taxonomy import Taxonomy
@@ -44,9 +46,15 @@ you know *what* you want but not *where* it is.
 - get_file_context -- every indexed chunk of one file, in order.
 - list_document_types -- what kinds of document this workspace actually holds,
   with counts. A count of zero is a real answer: it means look at the code.
+- impact_of -- what one file imports and, more usefully, what imports it.
+  Call this before changing a signature, and before deleting anything.
 
 Document types: {_TYPE_LIST}.
 """
+
+
+def build_impact_service(ctx: AppContext) -> ImpactService:
+    return ImpactService(ctx.manifest, recorder=ToolCallRecorder(ctx.manifest))
 
 
 def build_query_service(ctx: AppContext) -> QueryService:
@@ -61,12 +69,17 @@ def build_query_service(ctx: AppContext) -> QueryService:
     )
 
 
-def build_mcp_server(queries: QueryService) -> MCPServer:
-    """Wrap a QueryService in the protocol.
+def build_mcp_server(queries: QueryService, impact: ImpactService) -> MCPServer:
+    """Wrap the services in the protocol.
 
-    Takes the service rather than the AppContext so a test can build the real
+    Takes the services rather than the AppContext so a test can build the real
     server -- real tool schemas, real dispatch -- over a store it seeded
     itself, without constructing every layer of the application.
+
+    `impact` is required rather than defaulted to None. A tool that exists only
+    when someone remembered to wire it is worse than no tool: the agent cannot
+    tell a missing capability from a negative answer, and neither can the
+    person reading the code.
     """
     resolver = DocumentTypeResolver()
     server = MCPServer(name="workspace-indexer", instructions=_INSTRUCTIONS)
@@ -157,6 +170,28 @@ def build_mcp_server(queries: QueryService) -> MCPServer:
         """
         return await queries.taxonomy()
 
+    @server.tool()
+    async def impact_of(
+        rel_path: Annotated[
+            str,
+            Field(description="Path from a search result, or a trailing portion of one."),
+        ],
+        limit: Annotated[int, Field(description="Maximum edges per direction.", ge=1, le=200)] = 25,
+    ) -> ImpactReport:
+        """What one file imports, and what imports it.
+
+        Answer this before changing a signature, renaming an export, or
+        deleting a file. `used_by` is the expensive half: it spans every
+        repository in the workspace, which a per-project language server cannot
+        do, and each entry is anchored as path:line at the import statement.
+
+        Read `note` before concluding anything from an empty result. Empty can
+        mean the language has no import scanner, or that the imports naming
+        this file are spelled in a way we cannot resolve to a path -- neither
+        of which means nothing depends on it.
+        """
+        return impact.impact_of(rel_path, limit=limit)
+
     @server.resource(
         TAXONOMY_URI,
         name="Document taxonomy",
@@ -169,7 +204,14 @@ def build_mcp_server(queries: QueryService) -> MCPServer:
 
     # Registered by decoration; naming them here keeps the linter honest about
     # the fact that these are the server's public surface.
-    _ = (search_code, find_guidance, get_file_context, list_document_types, taxonomy_resource)
+    _ = (
+        search_code,
+        find_guidance,
+        get_file_context,
+        list_document_types,
+        impact_of,
+        taxonomy_resource,
+    )
     return server
 
 

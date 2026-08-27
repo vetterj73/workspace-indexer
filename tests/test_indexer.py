@@ -630,8 +630,8 @@ async def test_imports_resolve_to_indexed_files(harness: Harness, workspace: Pat
     stats = await harness.indexer().run()
 
     assert stats.imports_resolved >= 1
-    importers = harness.manifest.importers_of_file("workspace", "repo_one/src/helper.py")
-    assert [rel for rel, _ in importers] == ["repo_one/src/widget.py"]
+    importers = harness.manifest.dependents_of("workspace", "repo_one/src/helper.py")
+    assert [d.rel_path for d in importers] == ["repo_one/src/widget.py"]
 
 
 async def test_resolution_runs_after_the_whole_walk(harness: Harness, workspace: Path) -> None:
@@ -643,8 +643,8 @@ async def test_resolution_runs_after_the_whole_walk(harness: Harness, workspace:
     (src / "aaa_importer.py").write_text("from .zzz_target import VALUE\n", encoding="utf-8")
     await harness.indexer().run()
 
-    importers = harness.manifest.importers_of_file("workspace", "repo_one/src/zzz_target.py")
-    assert [rel for rel, _ in importers] == ["repo_one/src/aaa_importer.py"]
+    importers = harness.manifest.dependents_of("workspace", "repo_one/src/zzz_target.py")
+    assert [d.rel_path for d in importers] == ["repo_one/src/aaa_importer.py"]
 
 
 async def test_an_unresolvable_import_is_not_an_error(harness: Harness, workspace: Path) -> None:
