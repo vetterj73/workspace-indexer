@@ -36,14 +36,30 @@ _SIGNATURES: list[tuple[str, re.Pattern[str], str]] = [
 
 # An assignment to a credential-shaped name. The value still has to look random
 # before we act on it, or every `API_KEY=` line in a template trips the check.
+#
+# Two shapes this missed, both found against a real repository:
+#
+#   "password": "..."     A quoted key. The pattern ran key straight into
+#                         `[:=]`, so JSON -- the single commonest way a
+#                         credential is written down -- never matched at all.
+#   PASSWORD="a~b"        `~` was absent from the value class. Azure service
+#                         principal passwords routinely contain it, and the
+#                         value simply failed to match rather than failing the
+#                         entropy test.
+#
+# The value class is now "printable, not whitespace or a quote", which is what
+# a generated credential actually looks like. Entropy remains the thing that
+# decides, so widening this cannot by itself produce a false positive.
 _ASSIGNMENT = re.compile(
     r"""(?ix)
-    \b
     (?P<key>[A-Za-z0-9_.-]*
-        (?:api[_-]?key|secret|token|password|passwd|credential|auth)
+        (?:api[_-]?key|secret|token|password|passwd|credential|auth|
+           connection[_-]?string|conn[_-]?str|sas|pwd)
         [A-Za-z0-9_.-]*)
+    ["']?              # a quoted key: "password": "..."
     \s* [:=] \s*
-    ["']? (?P<value>[A-Za-z0-9+/=_\-.]{16,}) ["']?
+    ["']?
+    (?P<value>[^\s"'`,;)\]}]{16,})
     """
 )
 
@@ -86,7 +102,14 @@ def shannon_entropy(value: str) -> float:
 # SCREAMING_CASE. A generated value interleaves case and digits with no word
 # structure at all.
 _ATTRIBUTE = re.compile(r"\A[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+\Z")
-_CONVENTIONAL_NAME = re.compile(r"\A(?:[a-z_][a-z0-9_]*|[A-Z_][A-Z0-9_]*)\Z")
+_CONVENTIONAL_NAME = re.compile(r"\A(?:[a-z_][a-z0-9_]*|[A-Z_][A-Z0-9_]*|[a-zA-Z][a-zA-Z]*)\Z")
+
+# An expression rather than a literal: `builder.Configuration["x"]`,
+# `appInsights.properties.ConnectionString`, `keyVault.getSecret(...)`.
+# Widening the value class to catch `~` also started catching these, and
+# withholding a whole file over a variable reference is a silent loss of
+# content -- the worse error of the two here.
+_EXPRESSION = re.compile(r"[()\[\]{}]|\A[A-Za-z_][A-Za-z0-9_]*\.")
 
 
 def _looks_generated(value: str) -> bool:
@@ -98,6 +121,13 @@ def _looks_generated(value: str) -> bool:
         return False
     bare = value.strip()
     if _ATTRIBUTE.match(bare) or _CONVENTIONAL_NAME.match(bare):
+        return False
+    if _EXPRESSION.search(bare):
+        return False
+    # A generated credential mixes cases with digits or symbols. All-letters is
+    # an identifier -- `sqlAdminPassword`, `ClientCredentials` -- however long
+    # and however camel-cased, and camelCase clears the entropy bar easily.
+    if bare.isalpha():
         return False
     return shannon_entropy(value) >= _ENTROPY_THRESHOLD
 

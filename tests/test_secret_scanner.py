@@ -160,3 +160,71 @@ def test_code_referencing_a_credential_is_not_a_credential() -> None:
 def test_an_actual_literal_next_to_a_reference_is_still_caught() -> None:
     """Ignoring identifiers must not become a way to hide a real value."""
     assert scan('client(api_key=settings.key, secret="k7Fq2mZx9RtVwLpA3nBcYdQe")')
+
+
+# --- shapes found missing against a real repository ------------------------
+#
+# Values below are placeholders assembled to have the *shape* of a credential.
+# The scanner keys on shape and entropy, never on a real value, so these
+# exercise the same paths without committing a secret to a public repo.
+
+_HIGH_ENTROPY = "Tl8QaFxOkB9J0aoe1qYaUdNbUkDCHDrDKYaMbtS"
+_WITH_TILDE = "Tl8Q~FxOkB9J0aoe1qYaUdNbUkDCHDrDKYaMbtS"
+
+
+def test_a_quoted_json_key_is_matched() -> None:
+    """The single commonest way a credential is written down, and it was
+    missed entirely: the pattern ran the key straight into `[:=]`, allowing no
+    closing quote."""
+    assert scan(f'"password": "{_HIGH_ENTROPY}"')
+
+
+def test_a_value_containing_a_tilde_is_matched() -> None:
+    """`~` was absent from the value character class, so an Azure service
+    principal password failed to match at all rather than failing entropy."""
+    assert scan(f'"password": "{_WITH_TILDE}"')
+    assert scan(f'PASSWORD="{_WITH_TILDE}"')
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        '"client_secret": "{v}"',
+        '"apiKey": "{v}"',
+        '$password = "{v}"',
+        'ConnectionString="Server=x;Password={v};"',
+    ],
+)
+def test_credential_shapes_across_languages(line: str) -> None:
+    assert scan(line.format(v=_WITH_TILDE))
+
+
+# --- what widening the pattern must not start catching ---------------------
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # Expressions, not literals. Withholding a whole file over a variable
+        # reference is a silent loss of content -- the worse error here.
+        'appConfigurationConnectionString = builder.Configuration["AppConfig"]',
+        "instrumentationConnectionString: appInsights.properties.ConnectionString",
+        "administratorLoginPassword: sqlAdminPassword",
+        # camelCase and PascalCase identifiers clear the entropy bar easily.
+        "ClientCredentials: ClientCredentialsSettingsValue",
+        "api_key = settings.voyage_api_key",
+        # Templates and placeholders.
+        "password: ${DB_PASSWORD}",
+        '"apiKey": "<YOUR_KEY_HERE>"',
+        "VOYAGE_API_KEY=your-api-key-here",
+    ],
+)
+def test_identifiers_and_expressions_are_not_secrets(line: str) -> None:
+    assert not scan(line)
+
+
+def test_an_all_letter_value_is_an_identifier_however_long() -> None:
+    """A generated credential mixes letters with digits or symbols. All
+    letters is a name, whatever its length or casing."""
+    assert not scan('"password": "SomeVeryLongCamelCasedIdentifierName"')
+    assert scan('"password": "SomeVeryLongCamelCased1dentifierN4me~x"')
