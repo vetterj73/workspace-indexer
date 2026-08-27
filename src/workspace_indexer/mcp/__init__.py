@@ -16,6 +16,8 @@ from workspace_indexer.mcp.server_factory import (
 from workspace_indexer.mcp.taxonomy import TAXONOMY_VERSION, Taxonomy
 from workspace_indexer.mcp.taxonomy_entry import TaxonomyEntry
 from workspace_indexer.mcp.taxonomy_service import TaxonomyService
+from workspace_indexer.mcp.tool_call_recorder import ToolCallRecorder
+from workspace_indexer.mcp.tool_call_sink import ToolCallSink
 from workspace_indexer.mcp.unknown_document_type_error import UnknownDocumentTypeError
 
 __all__ = [
@@ -33,6 +35,8 @@ __all__ = [
     "Taxonomy",
     "TaxonomyEntry",
     "TaxonomyService",
+    "ToolCallRecorder",
+    "ToolCallSink",
     "UnknownDocumentTypeError",
     "build_mcp_server",
     "build_query_service",

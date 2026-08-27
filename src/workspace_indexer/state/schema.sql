@@ -91,6 +91,35 @@ CREATE TABLE IF NOT EXISTS imports (
 -- imports X" stays correct without any separate invalidation step.
 CREATE INDEX IF NOT EXISTS imports_by_module ON imports (module);
 
+-- What an agent asked through the MCP tools, and what it got back.
+--
+-- Here rather than only in the log because the useful question is relational:
+-- "which calls returned nothing" is a WHERE clause and a log scrape. Those
+-- calls are eval cases waiting to be written, which turns the queries an agent
+-- actually asks into the dataset instead of sixteen someone invented.
+--
+-- Paths only, never source_text: recording bodies would duplicate the index
+-- into the manifest, and paths plus ranks are what an eval scores.
+--
+-- NOTE: this table contains query text verbatim, which has corrupted a
+-- measurement three times before. It lives in data/, which is hardcoded-
+-- excluded from indexing, and a test asserts that stays true.
+CREATE TABLE IF NOT EXISTS mcp_calls (
+    called_at          TEXT    NOT NULL,
+    tool               TEXT    NOT NULL,
+    query              TEXT    NOT NULL,
+    parameters         TEXT    NOT NULL DEFAULT '{}',
+    returned           INTEGER NOT NULL DEFAULT 0,
+    returned_paths     TEXT    NOT NULL DEFAULT '[]',
+    total_matches      INTEGER NOT NULL DEFAULT 0,
+    dropped_for_budget INTEGER NOT NULL DEFAULT 0,
+    note               TEXT,
+    duration_ms        REAL    NOT NULL DEFAULT 0.0
+);
+
+-- The harvesting query is "calls that disappointed", so that is the index.
+CREATE INDEX IF NOT EXISTS mcp_calls_by_outcome ON mcp_calls (returned, called_at);
+
 -- Run history, so "why did this cost $40" is answerable from the manifest
 -- rather than by scraping logs, and a cost regression is visible over time.
 CREATE TABLE IF NOT EXISTS runs (

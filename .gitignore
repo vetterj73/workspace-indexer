@@ -11,6 +11,11 @@ data/
 .env
 config/workspace.yaml
 
+# Qdrant writes these into its working directory. Running the binary from the
+# repository root -- which a snapshot or restore test does -- drops them here.
+snapshots/
+.qdrant-initialized
+
 # Corpus configs and their eval datasets point at private repositories and
 # quote their internal file paths. This repository is public; a client's
 # directory structure is not ours to publish.

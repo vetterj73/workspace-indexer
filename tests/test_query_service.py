@@ -26,7 +26,9 @@ from workspace_indexer.mcp import (
     SearchResponse,
     TaxonomyService,
 )
-from workspace_indexer.models import Chunk, DocumentType, EmbeddingSpace, FileKind
+from workspace_indexer.mcp.tool_call_recorder import ToolCallRecorder
+from workspace_indexer.mcp.tool_call_sink import ToolCallSink
+from workspace_indexer.models import Chunk, DocumentType, EmbeddingSpace, FileKind, ToolCall
 from workspace_indexer.rerank.noop_reranker import NoopReranker
 from workspace_indexer.search.search_service import SearchService
 from workspace_indexer.storage.qdrant_store import QdrantStore
@@ -82,7 +84,11 @@ async def store(tmp_path: Path) -> AsyncIterator[QdrantStore]:
 
 
 def _queries(
-    store: QdrantStore, *, max_tokens: int = 6000, check_staleness: bool = False
+    store: QdrantStore,
+    *,
+    max_tokens: int = 6000,
+    check_staleness: bool = False,
+    sink: ToolCallSink | None = None,
 ) -> QueryService:
     search = SearchService(
         store=store,
@@ -99,6 +105,7 @@ def _queries(
         # Off by default here: the fixture's files never existed on disk, so
         # leaving it on would flag every hit and say nothing about the tools.
         check_staleness=check_staleness,
+        recorder=ToolCallRecorder(sink),
     )
 
 
@@ -258,3 +265,65 @@ async def test_file_context_honours_the_same_switch(store: QdrantStore) -> None:
     response = await _queries(store, check_staleness=False).get_file_context("repo/src/store.py")
     assert response.results
     assert not any(r.stale for r in response.results)
+
+
+class _Recorded(list[ToolCall]):
+    """Captures what the tools recorded, without a database."""
+
+    def record_tool_call(self, call: ToolCall) -> None:
+        self.append(call)
+
+
+async def test_every_tool_records_its_own_name(store: QdrantStore) -> None:
+    """`search.query` cannot say which tool ran; that is the whole gap."""
+    sink = _Recorded()
+    queries = _queries(store, sink=sink)
+
+    await queries.search_code("store", limit=5)
+    await queries.find_guidance("how must modules be structured", limit=5)
+    await queries.get_file_context("repo/src/store.py")
+
+    assert [c.tool for c in sink] == ["search_code", "find_guidance", "get_file_context"]
+
+
+async def test_the_record_carries_what_came_back(store: QdrantStore) -> None:
+    sink = _Recorded()
+    response = await _queries(store, sink=sink).search_code("store", limit=5)
+
+    call = sink[0]
+    assert call.returned_paths == [r.rel_path for r in response.results]
+    assert call.total_matches == response.total_matches
+    assert call.duration_ms > 0
+
+
+async def test_an_empty_call_is_recorded_as_disappointing(store: QdrantStore) -> None:
+    """The harvesting filter: an agent asked and got nothing, which is an eval
+    case waiting to be written."""
+    sink = _Recorded()
+    await _queries(store, sink=sink).find_guidance(
+        "kubernetes ingress", limit=5, doc_type=DocumentType.REFERENCE
+    )
+
+    assert sink[0].returned_paths == []
+    assert sink[0].disappointed is True
+    assert sink[0].note is not None
+
+
+async def test_a_budget_clipped_call_is_also_disappointing(store: QdrantStore) -> None:
+    """Returned nothing and returned less than it found are different
+    problems, and both are worth harvesting."""
+    sink = _Recorded()
+    await _queries(store, max_tokens=80, sink=sink).search_code("store", limit=20)
+
+    assert sink[0].returned_paths
+    assert sink[0].dropped_for_budget > 0
+    assert sink[0].disappointed is True
+
+
+async def test_the_filters_the_tool_applied_are_recorded(store: QdrantStore) -> None:
+    """An empty result means different things with and without a filter, so a
+    replayable record has to include the ones the tool defaulted into."""
+    sink = _Recorded()
+    await _queries(store, sink=sink).search_code("store", limit=5)
+
+    assert "exclude_doc_types" in sink[0].parameters

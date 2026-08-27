@@ -9,11 +9,14 @@ session and a subprocess.
 
 from __future__ import annotations
 
+import time
+
 from workspace_indexer.mcp.result_budget import ResultBudget
 from workspace_indexer.mcp.search_response import SearchResponse
 from workspace_indexer.mcp.taxonomy import Taxonomy
 from workspace_indexer.mcp.taxonomy_service import TaxonomyService
-from workspace_indexer.models import DocumentType, SearchFilters, SearchHit
+from workspace_indexer.mcp.tool_call_recorder import ToolCallRecorder
+from workspace_indexer.models import DocumentType, SearchFilters, SearchHit, ToolCall
 from workspace_indexer.obs.logging import get_logger
 from workspace_indexer.search.search_request import SearchRequest
 from workspace_indexer.search.search_service import SearchService
@@ -45,11 +48,15 @@ class QueryService:
         taxonomy: TaxonomyService,
         max_response_tokens: int = 6000,
         check_staleness: bool = True,
+        recorder: ToolCallRecorder | None = None,
     ) -> None:
         self._search = search
         self._taxonomy = taxonomy
         self._budget = ResultBudget(max_response_tokens)
         self._check_staleness = check_staleness
+        # Absent is a normal configuration: the tools work without a record,
+        # they just cannot be evaluated afterwards.
+        self._recorder = recorder or ToolCallRecorder()
 
     async def search_code(
         self,
@@ -67,8 +74,11 @@ class QueryService:
             path_prefix=path_prefix,
             exclude_doc_types=[] if include_tests else CODE_EXCLUDES,
         )
+        started = time.monotonic()
         hits = await self._run(query, filters, limit)
         return self._respond(
+            "search_code",
+            started,
             query,
             filters,
             hits,
@@ -98,9 +108,12 @@ class QueryService:
             repo_name=repo,
             doc_types=[doc_type] if doc_type else GUIDANCE_TYPES,
         )
+        started = time.monotonic()
         hits = await self._run(query, filters, limit)
         wanted = doc_type.value if doc_type else " or ".join(t.value for t in GUIDANCE_TYPES)
         return self._respond(
+            "find_guidance",
+            started,
             query,
             filters,
             hits,
@@ -117,12 +130,13 @@ class QueryService:
         Not a search: an agent that has a hit and wants the surrounding code
         should not have to guess a query that retrieves its neighbours.
         """
+        started = time.monotonic()
         hits = await self._search.chunks_for_path(
             rel_path, limit=limit, check_staleness=self._check_staleness
         )
         hits.sort(key=lambda h: (h.rel_path, h.start_line))
         results, dropped = self._budget.pack(hits)
-        return SearchResponse(
+        response = SearchResponse(
             query=rel_path,
             applied_filters={"rel_path": rel_path},
             results=results,
@@ -137,6 +151,8 @@ class QueryService:
                 else None
             ),
         )
+        self._record("get_file_context", started, response)
+        return response
 
     async def taxonomy(self) -> Taxonomy:
         return await self._taxonomy.build()
@@ -153,6 +169,8 @@ class QueryService:
 
     def _respond(
         self,
+        tool: str,
+        started: float,
         query: str,
         filters: SearchFilters,
         hits: list[SearchHit],
@@ -168,7 +186,7 @@ class QueryService:
                 f"{dropped} further match(es) were dropped to stay inside the "
                 "response token budget; narrow the query or raise the limit."
             )
-        return SearchResponse(
+        response = SearchResponse(
             query=query,
             applied_filters=_describe(filters),
             results=results,
@@ -176,6 +194,22 @@ class QueryService:
             returned=len(results),
             dropped_for_budget=dropped,
             note=note,
+        )
+        self._record(tool, started, response)
+        return response
+
+    def _record(self, tool: str, started: float, response: SearchResponse) -> None:
+        self._recorder.record(
+            ToolCall(
+                tool=tool,
+                query=response.query,
+                parameters=response.applied_filters,
+                returned_paths=[r.rel_path for r in response.results],
+                total_matches=response.total_matches,
+                dropped_for_budget=response.dropped_for_budget,
+                note=response.note,
+                duration_ms=(time.monotonic() - started) * 1000,
+            )
         )
 
 

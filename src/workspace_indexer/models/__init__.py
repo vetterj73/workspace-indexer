@@ -17,6 +17,7 @@ from workspace_indexer.models.search_filters import SearchFilters
 from workspace_indexer.models.search_hit import SearchHit
 from workspace_indexer.models.source_file import SourceFile
 from workspace_indexer.models.sparse_vec import SparseVec
+from workspace_indexer.models.tool_call import ToolCall
 
 __all__ = [
     "CHUNK_NAMESPACE",
@@ -30,6 +31,7 @@ __all__ = [
     "SearchFilters",
     "SearchHit",
     "SourceFile",
+    "ToolCall",
     "SparseVec",
     "compute_chunk_id",
     "sha256_text",
