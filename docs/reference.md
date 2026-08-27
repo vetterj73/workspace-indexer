@@ -259,6 +259,25 @@ specs.
 exist because clients differ in how reliably a model sees a resource the user
 has not attached, whereas a tool is always in context.
 
+### Import graph
+
+Each code file's imports are extracted during indexing and, where possible,
+resolved to another indexed file. `status` reports both coverage (which
+languages have an extractor) and resolution (how many edges point at a file).
+
+Resolved within a repository only. Python relative and absolute imports,
+and JS/TS relative specifiers — including TypeScript's ESM convention where
+`import './x.js'` names a file that is actually `x.ts`.
+
+**Not** resolved, deliberately: packages (`react`, `pydantic`), tsconfig path
+aliases (`@/lib/utils`), and C# namespaces, which name no path at all. Those
+need a build system or a workspace-wide symbol table; until then they resolve
+to nothing rather than to something plausible. An unresolved edge is not a
+missing dependency.
+
+The reverse edge — *which files import this one* — spans every repository in
+the workspace, which is what a per-project language server cannot answer.
+
 ### Recorded calls
 
 Every tool call is recorded twice: as an `mcp.tool_call` event in the rolling

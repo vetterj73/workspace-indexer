@@ -81,6 +81,11 @@ CREATE TABLE IF NOT EXISTS imports (
     kind        TEXT    NOT NULL,
     is_relative INTEGER NOT NULL DEFAULT 0,
     line        INTEGER NOT NULL,
+    -- The indexed file this edge points at, once resolved. NULL means either
+    -- "not resolvable yet" (a package, a tsconfig alias, a C# namespace) or
+    -- "ambiguous", and those must stay distinguishable from "no edge" -- see
+    -- resolution_coverage().
+    resolved_path TEXT,
     PRIMARY KEY (root_label, rel_path, module, line),
     FOREIGN KEY (root_label, rel_path) REFERENCES files (root_label, rel_path)
         ON DELETE CASCADE
@@ -90,6 +95,10 @@ CREATE TABLE IF NOT EXISTS imports (
 -- than scanned. Deleting a file cascades its rows away, which means "who
 -- imports X" stays correct without any separate invalidation step.
 CREATE INDEX IF NOT EXISTS imports_by_module ON imports (module);
+
+-- The index on resolved_path is created in _migrate() rather than here.
+-- executescript runs before the migration, so on a database predating that
+-- column this statement would fail and take the whole open with it.
 
 -- What an agent asked through the MCP tools, and what it got back.
 --

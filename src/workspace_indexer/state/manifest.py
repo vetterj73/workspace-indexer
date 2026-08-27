@@ -68,6 +68,7 @@ class Manifest:
                 "unpriced_requests": "INTEGER NOT NULL DEFAULT 0",
                 "cost_is_estimate": "INTEGER NOT NULL DEFAULT 0",
             },
+            "imports": {"resolved_path": "TEXT"},
         }
         for table, columns in additions.items():
             existing = {str(row["name"]) for row in self._db.execute(f"PRAGMA table_info({table})")}
@@ -75,6 +76,12 @@ class Manifest:
                 if column not in existing:
                     self._db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
                     log.info("state.migrated", table=table, column=column)
+
+        # After the columns exist, never before: schema.sql runs first, so an
+        # index over an added column cannot live there -- it would fail to
+        # create on every database predating the column and take the open with
+        # it. The reverse edge everyone wants is "which files import this one".
+        self._db.execute("CREATE INDEX IF NOT EXISTS imports_by_target ON imports (resolved_path)")
 
     def __enter__(self) -> Manifest:
         return self
@@ -336,6 +343,86 @@ class Manifest:
             )
             for r in rows
         ]
+
+    def unresolved_imports(self) -> list[tuple[str, str, str, str, bool]]:
+        """Every edge with no target yet, as (root_label, rel_path, module,
+        language, is_relative).
+
+        Resolution needs the whole file set, so it runs after the walk rather
+        than per file -- an import can name a file that has not been reached
+        yet.
+        """
+        rows = self._db.execute(
+            "SELECT i.root_label, i.rel_path, i.module, i.is_relative, f.language "
+            "FROM imports i JOIN files f "
+            "ON f.root_label = i.root_label AND f.rel_path = i.rel_path "
+            "WHERE i.resolved_path IS NULL"
+        )
+        return [
+            (
+                str(r["root_label"]),
+                str(r["rel_path"]),
+                str(r["module"]),
+                str(r["language"] or ""),
+                bool(r["is_relative"]),
+            )
+            for r in rows
+        ]
+
+    def set_resolved_path(self, root_label: str, rel_path: str, module: str, resolved: str) -> None:
+        self._db.execute(
+            "UPDATE imports SET resolved_path = ? "
+            "WHERE root_label = ? AND rel_path = ? AND module = ?",
+            (resolved, root_label, rel_path, module),
+        )
+
+    def importers_of_file(self, root_label: str, rel_path: str) -> list[tuple[str, int]]:
+        """Which indexed files import this one, as (rel_path, line).
+
+        The reverse edge, resolved. This is the half a per-project language
+        server structurally cannot answer, because it spans every repository in
+        the workspace rather than one project.
+        """
+        rows = self._db.execute(
+            "SELECT rel_path, line FROM imports "
+            "WHERE root_label = ? AND resolved_path = ? ORDER BY rel_path, line",
+            (root_label, rel_path),
+        )
+        return [(str(r["rel_path"]), int(r["line"])) for r in rows]
+
+    def resolution_coverage(self) -> dict[str, tuple[int, int]]:
+        """Per language: edges resolved to a file, and total edges.
+
+        Both halves, for the same reason coverage is reported at all: an
+        unresolved edge is not a missing dependency, it is one we cannot follow
+        yet, and those call for opposite conclusions.
+        """
+        rows = self._db.execute(
+            "SELECT f.language AS language, COUNT(*) AS total, "
+            "SUM(CASE WHEN i.resolved_path IS NOT NULL THEN 1 ELSE 0 END) AS resolved "
+            "FROM imports i JOIN files f "
+            "ON f.root_label = i.root_label AND f.rel_path = i.rel_path "
+            "WHERE f.language IS NOT NULL GROUP BY f.language"
+        )
+        return {str(r["language"]): (int(r["resolved"] or 0), int(r["total"])) for r in rows}
+
+    def files_by_unit(self) -> dict[tuple[str, str], set[str]]:
+        """Indexed rel_paths grouped by (root_label, unit).
+
+        The resolver's search space. A unit is the top-level directory of a
+        root -- a repository, by construction -- and is derived here rather
+        than stored, because it is exactly the first path segment and a column
+        would be a second source of truth for the same fact.
+
+        Keyed by root as well, so two roots holding a repo of the same name
+        cannot resolve into each other.
+        """
+        grouped: dict[tuple[str, str], set[str]] = {}
+        for row in self._db.execute("SELECT root_label, rel_path FROM files"):
+            rel = str(row["rel_path"])
+            unit = rel.split("/")[0] if "/" in rel else ""
+            grouped.setdefault((str(row["root_label"]), unit), set()).add(rel)
+        return grouped
 
     def importers_of(self, module: str) -> list[tuple[str, str, int]]:
         """Every file importing `module`, as (root_label, rel_path, line).

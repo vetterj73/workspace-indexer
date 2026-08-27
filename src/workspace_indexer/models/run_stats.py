@@ -27,6 +27,10 @@ class RunStats(BaseModel):
     # True when the cost above came from a configured rate rather than from
     # the provider.
     cost_is_estimate: bool = False
+    # Import edges pointed at a file this run. Not all edges can be: a
+    # package, a tsconfig alias and a C# namespace all need more than the
+    # file list, and stay unresolved rather than being guessed at.
+    imports_resolved: int = 0
     errors: int = 0
     config_hash: str = ""
     skip_reasons: dict[str, int] = Field(default_factory=dict)

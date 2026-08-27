@@ -618,3 +618,43 @@ async def test_the_option_does_not_change_chunk_identity(harness: Harness) -> No
     assert set(harness.manifest.chunk_ids_for(*target)) == before
     # Nothing re-embedded, which is the trap the docs have to warn about.
     assert stats.chunks_upserted == 0
+
+
+async def test_imports_resolve_to_indexed_files(harness: Harness, workspace: Path) -> None:
+    """Rung 2: an edge points at a file, not just at a string."""
+    target = workspace / "repo_one" / "src" / "helper.py"
+    target.write_text("def helper():\n    return 1\n", encoding="utf-8")
+    (workspace / "repo_one" / "src" / "widget.py").write_text(
+        "from .helper import helper\n\n\ndef widget():\n    return helper()\n", encoding="utf-8"
+    )
+    stats = await harness.indexer().run()
+
+    assert stats.imports_resolved >= 1
+    importers = harness.manifest.importers_of_file("workspace", "repo_one/src/helper.py")
+    assert [rel for rel, _ in importers] == ["repo_one/src/widget.py"]
+
+
+async def test_resolution_runs_after_the_whole_walk(harness: Harness, workspace: Path) -> None:
+    """An import can name a file the walk has not reached yet, so resolving
+    per file would depend on walk order and differ between runs."""
+    src = workspace / "repo_one" / "src"
+    # Alphabetically `aaa` is walked long before `zzz`, and imports the later one.
+    (src / "zzz_target.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (src / "aaa_importer.py").write_text("from .zzz_target import VALUE\n", encoding="utf-8")
+    await harness.indexer().run()
+
+    importers = harness.manifest.importers_of_file("workspace", "repo_one/src/zzz_target.py")
+    assert [rel for rel, _ in importers] == ["repo_one/src/aaa_importer.py"]
+
+
+async def test_an_unresolvable_import_is_not_an_error(harness: Harness, workspace: Path) -> None:
+    """Stdlib and third-party imports stay unresolved, and that is the correct
+    answer rather than a failure."""
+    (workspace / "repo_one" / "src" / "widget.py").write_text(
+        "import os\nimport pydantic\n\n\ndef widget():\n    return os.name\n", encoding="utf-8"
+    )
+    await harness.indexer().run()
+
+    coverage = harness.manifest.resolution_coverage()
+    resolved, total = coverage["python"]
+    assert total > resolved
