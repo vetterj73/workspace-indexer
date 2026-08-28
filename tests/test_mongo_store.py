@@ -285,3 +285,12 @@ async def test_describe_names_the_backend_for_a_human(store: MongoStore) -> None
     """Preflight used to reconstruct this from Qdrant settings, which reported
     an empty Mongo index as an empty Qdrant one."""
     assert store.describe() == "mongodb idx"
+
+
+def test_the_document_we_build_is_within_the_bson_limit() -> None:
+    """16 MB per document. A chunk is nowhere near it, but the failure mode if
+    one ever were is a rejected write in the middle of a paid run."""
+    import bson
+
+    document = build_document("id", [0.1] * 2048, {"source_text": "x" * 100_000})
+    assert len(bson.encode(document)) < 16 * 1024 * 1024

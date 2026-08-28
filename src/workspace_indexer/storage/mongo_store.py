@@ -78,6 +78,7 @@ class MongoStore:
         workspace: str,
         database: str,
         dtype: str = "float32",
+        prefer_rank_fusion: bool = True,
     ) -> None:
         self._client = client
         self._workspace = workspace
@@ -88,7 +89,11 @@ class MongoStore:
         # only ever set to False by the server actually rejecting the stage --
         # never inferred from a version string, because the rollout that gates
         # it does not line up with version numbers.
-        self._rank_fusion: bool | None = None
+        # False here means "do not even try", which is different from the
+        # discovered False below. Exists so the fallback can be exercised
+        # against a cluster that *does* have the stage -- otherwise the only
+        # way to test that path on real data is to find a server without it.
+        self._rank_fusion: bool | None = None if prefer_rank_fusion else False
         # Whether this deployment has mongot at all. A plain community mongod
         # accepts documents happily and then fails every search, which is the
         # worst possible time to find out.

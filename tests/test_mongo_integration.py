@@ -10,29 +10,52 @@ Writes into a collection of its own and drops it afterwards, so pointing this
 at a cluster holding a real index is safe. Uses four dimensions and a handful
 of documents, so it costs no embedding tokens and a trivial amount of storage.
 
-The one thing worth knowing before reading a failure here: Atlas search indexes
-build **asynchronously**. A collection can hold documents and answer nothing
-for a minute afterwards, which looks exactly like a broken query. `_wait_ready`
-is why, and a timeout there is a slow cluster rather than a wrong pipeline.
+Two things to know before reading a failure here, both learned by running it.
+
+Atlas search indexes build **asynchronously**. A collection can hold every
+document and answer every query with nothing for a minute afterwards, which
+looks exactly like a broken pipeline. `_wait_ready` is why, and a timeout there
+means a slow cluster rather than a wrong query.
+
+The fixture is **module-scoped**, and that is a correctness requirement rather
+than a speed optimisation. A Free cluster allows three search indexes in total,
+this store needs two, and dropping a collection does not free the quota
+immediately -- deletion is asynchronous the same way creation is. Per-test
+setup therefore fails the second test with "The maximum number of FTS indexes
+has been reached for this instance size", which is a real constraint anyone
+running this against a Free cluster will meet, not an artefact of the tests.
 """
 
 from __future__ import annotations
 
 import asyncio
-import os
 from collections.abc import AsyncIterator
+from contextlib import suppress
+from typing import Any
 
 import pytest
+import pytest_asyncio
+from pymongo.errors import OperationFailure
 
+from workspace_indexer.config import Settings
 from workspace_indexer.models import DocumentType, EmbeddingSpace, SearchFilters
-from workspace_indexer.storage.mongo_store import MongoStore, build_document
+from workspace_indexer.storage.mongo_store import MongoStore
 from workspace_indexer.storage.query_spec import QuerySpec
 
-CONNECTION = os.environ.get("MONGODB_CONNECTION_STRING")
+# Through Settings, not os.environ. The reference tells people to put this in
+# `.env`, and a test reading only the process environment would skip forever
+# for everyone who followed that -- silently, and looking like a pass.
+_SETTINGS = Settings()
+CONNECTION = _SETTINGS.mongodb_connection_string
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(not CONNECTION, reason="MONGODB_CONNECTION_STRING is not set"),
+    # Every test on the module's loop, because the fixture is module-scoped
+    # and AsyncMongoClient binds to the loop it was created on -- using it from
+    # a per-test loop raises rather than reconnecting.
+    pytest.mark.asyncio(loop_scope="module"),
 ]
+
 
 # Deliberately tiny and deliberately its own space slug, so the collection name
 # cannot collide with a real one on the same cluster.
@@ -48,20 +71,22 @@ DOCUMENTS = [
 ]
 
 READY_TIMEOUT_SECONDS = 300
+# A Free cluster allows three search indexes in total and frees them lazily.
+QUOTA_TIMEOUT_SECONDS = 180
 
 
-@pytest.fixture
+@pytest_asyncio.fixture(scope="module", loop_scope="module")
 async def store() -> AsyncIterator[MongoStore]:
+    """Seeded once for the whole module. See the note above about the FTS
+    index quota -- per-test setup does not merely take longer, it fails."""
     from pymongo import AsyncMongoClient
 
     client: AsyncMongoClient[dict[str, object]] = AsyncMongoClient(CONNECTION)
-    made = MongoStore(
-        client,
-        workspace=WORKSPACE,
-        database=os.environ.get("MONGODB_DATABASE", "workspace_indexer"),
-    )
+    made = MongoStore(client, workspace=WORKSPACE, database=_SETTINGS.mongodb_database)
     await made.drop_collection(SPACE)
+    await _wait_quota_free(client[_SETTINGS.mongodb_database])
     try:
+        await _seed(made)
         yield made
     finally:
         await made.drop_collection(SPACE)
@@ -99,6 +124,26 @@ async def _seed(store: MongoStore) -> None:
     await _wait_ready(store)
 
 
+async def _wait_quota_free(database: Any) -> None:
+    """Wait for a dropped collection's search indexes to actually go away.
+
+    Deletion is asynchronous, like creation. Dropping the collection and
+    immediately recreating it fails with "The maximum number of FTS indexes has
+    been reached for this instance size" -- which reads like a quota problem
+    but is a timing one, and is the single most confusing thing about
+    developing against a Free cluster.
+    """
+    for _ in range(QUOTA_TIMEOUT_SECONDS // 5):
+        outstanding = 0
+        for name in await database.list_collection_names():
+            with suppress(OperationFailure):
+                outstanding += len([i async for i in await database[name].list_search_indexes()])
+        if not outstanding:
+            return
+        await asyncio.sleep(5)
+    pytest.fail(f"search indexes still held after {QUOTA_TIMEOUT_SECONDS}s")
+
+
 async def _wait_ready(store: MongoStore) -> None:
     """Block until both search indexes answer queries.
 
@@ -119,12 +164,10 @@ async def _wait_ready(store: MongoStore) -> None:
 
 async def test_atlas_accepts_the_index_definitions_we_generate(store: MongoStore) -> None:
     """The first thing that can be wrong, and the cheapest to find out."""
-    await _seed(store)
     assert await store.count(SPACE) == len(DOCUMENTS)
 
 
 async def test_a_dense_search_finds_the_nearest_vector(store: MongoStore) -> None:
-    await _seed(store)
     hits = await store.search(
         SPACE, QuerySpec(dense=[1.0, 0.0, 0.0, 0.0], fusion="dense_only", limit=3)
     )
@@ -137,7 +180,6 @@ async def test_a_dense_search_finds_the_nearest_vector(store: MongoStore) -> Non
 
 async def test_a_text_search_finds_the_matching_words(store: MongoStore) -> None:
     """The half that is Lucene rather than our fastembed sparse vector."""
-    await _seed(store)
     hits = await store.search(SPACE, QuerySpec(text="sponge", fusion="sparse_only", limit=3))
     assert [h.rel_path for h in hits] == ["src/cake.py"]
     assert hits[0].score > 0.0
@@ -146,7 +188,6 @@ async def test_a_text_search_finds_the_matching_words(store: MongoStore) -> None
 async def test_hybrid_search_returns_both_branches(store: MongoStore) -> None:
     """Whether this goes through $rankFusion or the client-side fallback is
     the server's decision; the result must be the same either way."""
-    await _seed(store)
     hits = await store.search(SPACE, QuerySpec(dense=[1.0, 0.0, 0.0, 0.0], text="sponge", limit=3))
     paths = {h.rel_path for h in hits}
     assert "src/auth.py" in paths, "the dense branch contributed nothing"
@@ -156,7 +197,6 @@ async def test_hybrid_search_returns_both_branches(store: MongoStore) -> None:
 async def test_a_filter_is_applied_inside_the_search_not_after_it(store: MongoStore) -> None:
     """The assertion that catches a filter Atlas silently ignored, which is
     what an undeclared filter field produces."""
-    await _seed(store)
     hits = await store.search(
         SPACE,
         QuerySpec(dense=[0.0, 0.0, 1.0, 0.0], fusion="dense_only", limit=3),
@@ -167,7 +207,6 @@ async def test_a_filter_is_applied_inside_the_search_not_after_it(store: MongoSt
 
 
 async def test_a_reindexed_chunk_replaces_rather_than_duplicates(store: MongoStore) -> None:
-    await _seed(store)
     await store.upsert_points(
         SPACE, ["auth"], [[1.0, 0.0, 0.0, 0.0]], [], [{"rel_path": "src/auth.py"}]
     )
@@ -177,7 +216,6 @@ async def test_a_reindexed_chunk_replaces_rather_than_duplicates(store: MongoSto
 async def test_the_vector_survives_a_round_trip_through_bindata(store: MongoStore) -> None:
     """What `reproject` depends on: vectors read back out have to be the
     vectors we paid to compute."""
-    await _seed(store)
     found = {
         point_id: vectors async for point_id, _, vectors in store.scroll(SPACE, with_vectors=True)
     }
@@ -185,10 +223,30 @@ async def test_the_vector_survives_a_round_trip_through_bindata(store: MongoStor
     assert found["auth"]["dense"] == pytest.approx([1.0, 0.0, 0.0, 0.0])
 
 
-def test_the_document_we_build_is_within_the_bson_limit() -> None:
-    """16 MB per document. A chunk is nowhere near it, but the failure mode if
-    one ever were is a rejected write in the middle of a paid run."""
-    import bson
+async def test_both_fusion_paths_agree_on_real_data(store: MongoStore) -> None:
+    """The client-side fallback has to be a substitute, not an approximation.
 
-    document = build_document("id", [0.1] * 2048, {"source_text": "x" * 100_000})
-    assert len(bson.encode(document)) < 16 * 1024 * 1024
+    This cluster has `$rankFusion`, so the hybrid tests above exercise the
+    server-side path only. Forcing the fallback here is the only way to find
+    out on real data whether the two orderings actually match -- and if they
+    ever diverge, results would silently depend on which Atlas region a
+    cluster happens to be in.
+    """
+    from pymongo import AsyncMongoClient
+
+    query = QuerySpec(dense=[1.0, 0.0, 0.0, 0.0], text="sponge", limit=3)
+    server_side = await store.search(SPACE, query)
+
+    client: AsyncMongoClient[dict[str, object]] = AsyncMongoClient(CONNECTION)
+    forced = MongoStore(
+        client,
+        workspace=WORKSPACE,
+        database=_SETTINGS.mongodb_database,
+        prefer_rank_fusion=False,
+    )
+    try:
+        client_side = await forced.search(SPACE, query)
+    finally:
+        await forced.close()
+
+    assert [h.rel_path for h in server_side] == [h.rel_path for h in client_side]
