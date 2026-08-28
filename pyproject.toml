@@ -38,6 +38,7 @@ dependencies = [
 logfire = ["logfire>=4.0", "pydantic-ai-slim[logfire]>=2.33"]
 watch = ["watchfiles>=1.2"]
 pdf = ["pymupdf>=1.24"]
+mongo = ["pymongo (>=4.10)"]
 
 [project.scripts]
 workspace-indexer = "workspace_indexer.cli:app"

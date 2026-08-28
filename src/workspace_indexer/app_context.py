@@ -32,7 +32,7 @@ from workspace_indexer.rerank.reranker import Reranker
 from workspace_indexer.search import SearchService
 from workspace_indexer.state import Manifest
 from workspace_indexer.storage import build_vector_store
-from workspace_indexer.storage.qdrant_store import QdrantStore
+from workspace_indexer.storage.vector_store import VectorStore
 
 
 @dataclass(slots=True)
@@ -44,7 +44,7 @@ class AppContext:
     registry: ChunkerRegistry
     embeddings: EmbeddingService
     sparse: SparseBackend
-    store: QdrantStore
+    store: VectorStore
     reranker: Reranker
     classifier: DocumentClassifier
 

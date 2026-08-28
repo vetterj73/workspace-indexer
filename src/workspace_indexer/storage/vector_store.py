@@ -14,6 +14,19 @@ class VectorStore(Protocol):
     """Async because the indexing pipeline is: a synchronous client would stall
     the event loop that the concurrent embedding requests depend on."""
 
+    def collection_name(self, space: EmbeddingSpace) -> str: ...
+
+    def describe(self) -> str:
+        """Where this store actually is, for an error a human has to act on.
+
+        On the protocol rather than composed at the call site because the only
+        thing that knows whether "embedded qdrant at ./data" or "mongodb
+        code_index" is the right phrase is the store. Preflight used to spell
+        out Qdrant's two modes inline, which quietly made an empty Mongo index
+        report itself as an empty Qdrant one.
+        """
+        ...
+
     async def ensure_collection(self, space: EmbeddingSpace) -> None: ...
 
     async def upsert(

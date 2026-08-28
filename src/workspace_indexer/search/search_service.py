@@ -65,6 +65,7 @@ class SearchService:
             QuerySpec(
                 dense=dense,
                 sparse=sparse,
+                text=request.query,
                 fusion=fusion,
                 limit=depth,
                 prefetch_limit=self._config.prefetch_limit,

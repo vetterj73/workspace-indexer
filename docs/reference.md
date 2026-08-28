@@ -188,12 +188,15 @@ which is what makes the `.mcp.json` `env` block work.
 | `SPARSE_MODEL` | `Qdrant/bm25` | Local, free, no API call. |
 | `RERANK_ENABLED` | `true` | |
 | `RERANK_MODEL` | `voyageai:rerank-2.5-lite` | Missing key resolves to a no-op reranker and logs once — a search never fails because an optional enhancement is unconfigured. |
-| `VECTOR_STORE` | `qdrant` | |
+| `VECTOR_STORE` | `qdrant` | `qdrant` or `mongodb`. The `QDRANT_*` keys are read only for the first, the `MONGODB_*` keys only for the second. |
 | `QDRANT_MODE` | `embedded` | `embedded` is single-process and **ignores payload indexes**, so `doc_type` filtering scans. `server` is required for the MCP server and the watcher. |
 | `QDRANT_PATH` | `data/qdrant` | Embedded mode only. Relative — a process started elsewhere resolves it elsewhere. |
 | `QDRANT_URL` | `http://localhost:6333` | |
 | `QDRANT_API_KEY` | none | **Qdrant has no authentication by default, and the payload contains your source text.** Set this whenever it is not bound to loopback. |
 | `QDRANT_ON_DISK_PAYLOAD` | `true` | |
+| `MONGODB_CONNECTION_STRING` | none | Atlas: Connect → Drivers. Carries the password inline, so it belongs here and never in `workspace.yaml`. Needs `poetry install --extras mongo`. |
+| `MONGODB_DATABASE` | `workspace_indexer` | Collections inside it are named exactly as Qdrant's are. |
+| `MONGODB_VECTOR_DTYPE` | `float32` | `float32` or `int8`, both stored as BSON `binData`. See §7. |
 | `STATE_DB` | `data/manifest.sqlite3` | Give a second workspace its own, or both share one and the divergence check misfires. |
 | `LOG_LEVEL` | from yaml | |
 | `LOGFIRE_ENABLED` / `LOGFIRE_SEND_TO_CLOUD` / `LOGFIRE_TOKEN` | none | |
@@ -207,8 +210,9 @@ and talks down a pipe. No port, nothing left running. See
 `docs/deployment.md` §4 for the `.mcp.json` recipe and why every path in it
 must be absolute.
 
-Requires `QDRANT_MODE=server` — the server holds the index open for the whole
-session, which embedded mode's exclusive lock forbids.
+On Qdrant this requires `QDRANT_MODE=server` — the server holds the index open
+for the whole session, which embedded mode's exclusive lock forbids. Mongo has
+no equivalent restriction; Atlas is a server by construction.
 
 ### Tools
 
@@ -322,7 +326,88 @@ the index, not from this page.
 
 ---
 
-## 5. Things that surprise people
+## 5. Choosing a vector store
+
+Two backends behind one `VectorStore` protocol. Nothing above `storage/` knows
+which is configured, the payload is built and read by the same two functions in
+both, and collections carry the same name — so a workspace indexed into both is
+recognisably the same index in each.
+
+### Qdrant
+
+The default. Embedded for a single process, server for anything concurrent.
+`docs/deployment.md` covers running it.
+
+### MongoDB Atlas
+
+`VECTOR_STORE=mongodb`, plus `poetry install --extras mongo`. Two Atlas indexes
+are created automatically on first run: a `vectorSearch` index over the dense
+vector and a `search` index over the text.
+
+They build **asynchronously**. A collection can hold every document and answer
+every query with nothing for a minute afterwards, which looks exactly like a
+broken query. `workspace-indexer status` reports whether each is queryable yet.
+
+**Hybrid search works differently here, and it is worth knowing how.** On
+Qdrant the keyword branch scores a BM25 sparse vector we compute locally with
+fastembed. Atlas has its own inverted index and no way to accept ours, so the
+keyword branch is a `$search` stage and the scoring is Lucene's. Same idea, same
+collection-wide IDF, different implementation — so a recall difference between
+the two backends is worth attributing to that before blaming the vectors. The
+sparse vector is still computed and simply discarded on this backend.
+
+Fusion is `$rankFusion`, Atlas's native RRF, where the cluster has it. That is a
+rolling deployment across the 8.0 fleet, so the first hybrid search tries it and
+falls back to fusing ranks client-side if the server rejects the stage — same
+RRF constant, same ordering, one extra round trip. The fallback is decided once
+per process, by asking the server rather than by reading a version number.
+
+### Sizing a Free cluster
+
+A Free (`M0`) cluster allows **512 MB total, including indexes**, and **three
+search indexes of any kind** — this uses two, leaving one spare.
+
+Vectors are stored as BSON `binData`, not as arrays of doubles, and that is the
+whole reason the free tier is viable. Measured on this workspace's own index of
+11,049 chunks at 1024 dimensions:
+
+| encoding | per document | 11,049 chunks |
+|---|---|---|
+| array of doubles | 15.07 KB | 163 MB |
+| `binData` float32 (default) | 6.15 KB | 66 MB |
+| `binData` int8 | 3.15 KB | 34 MB |
+| payload alone, no vector | 2.14 KB | 23 MB |
+
+Add the mongod b-tree indexes and the mongot indexes on top. Budget roughly
+**12 KB per chunk all-in** and the 512 MB ceiling arrives at **around 40,000
+chunks** — about four times this workspace. Past that, move to a paid tier
+rather than reaching for `int8`: quantisation costs recall, and recall is the
+thing being bought.
+
+`MONGODB_VECTOR_DTYPE=int8` exists for when storage genuinely is the binding
+constraint. Not `int1`: Atlas supports it only with euclidean similarity, and
+every measurement this project has taken is on cosine.
+
+### Two Atlas features deliberately not used
+
+**Automated Embedding** — Atlas generating embeddings server-side on insert —
+is not wired up, for three separate reasons, any one of which would be enough.
+It requires `M10` or higher, so it is unavailable on the free tier at all. It
+supports Voyage models only, which puts the provider abstraction that
+`pydantic-ai` buys us back behind a vendor lock. And its **query** rate limit is
+3 requests per minute — for an MCP tool an agent calls a dozen times in one
+task, that is a hard stop rather than a tuning problem.
+
+**`$rerank`** — Atlas running a Voyage reranker inside the aggregation — is a
+genuine option and would fit the existing `Reranker` protocol as a third
+implementation beside Voyage and the no-op. It is not built yet, and the reason
+to be careful is the same one: it is Voyage-only server-side, so adopting it
+would move a swappable client-side component into the database. Worth measuring
+against the current client-side reranker before adopting, not instead of it.
+
+---
+
+## 6. Things that surprise people
 
 **Adding a corpus under an existing root joins the main index** and shifts
 every eval number for reasons unrelated to any code change. Give it its own
