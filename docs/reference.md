@@ -208,8 +208,8 @@ which is what makes the `.mcp.json` `env` block work.
 | `EMBEDDING_FREE_TIER_TOKENS` | none | `status` shows drawdown against it. A floor on usage, never an authority: the allowance is per account and spent by anything using the key. |
 | `VOYAGE_API_KEY` | none | Exported to `os.environ` at startup, because provider SDKs read it from there. |
 | `SPARSE_MODEL` | `Qdrant/bm25` | Local, free, no API call. |
-| `RERANK_ENABLED` | `true` | |
-| `RERANK_MODEL` | `voyageai:rerank-2.5-lite` | Missing key resolves to a no-op reranker and logs once — a search never fails because an optional enhancement is unconfigured. |
+| `RERANK_ENABLED` | from yaml | Overrides `search.rerank.enabled`, and only when actually set — the default here does not silently beat a `workspace.yaml` that configured reranking. |
+| `RERANK_MODEL` | from yaml | Overrides `search.rerank.model`, same rule as above. A missing API key resolves to a no-op reranker and logs once — a search never fails because an optional enhancement is unconfigured. |
 | `VECTOR_STORE` | `qdrant` | `qdrant` or `mongodb`. The `QDRANT_*` keys are read only for the first, the `MONGODB_*` keys only for the second. |
 | `QDRANT_MODE` | `embedded` | `embedded` is single-process and **ignores payload indexes**, so `doc_type` filtering scans. `server` is required for the MCP server and the watcher. |
 | `QDRANT_PATH` | `data/qdrant` | Embedded mode only. Relative — a process started elsewhere resolves it elsewhere. |
@@ -221,7 +221,8 @@ which is what makes the `.mcp.json` `env` block work.
 | `MONGODB_VECTOR_DTYPE` | `float32` | `float32` or `int8`, both stored as BSON `binData`. See §7. |
 | `STATE_DB` | `data/manifest.sqlite3` | Give a second workspace its own, or both share one and the divergence check misfires. |
 | `LOG_LEVEL` | from yaml | |
-| `LOGFIRE_ENABLED` / `LOGFIRE_SEND_TO_CLOUD` / `LOGFIRE_TOKEN` | none | |
+| `LOGFIRE_ENABLED` / `LOGFIRE_SEND_TO_CLOUD` | none | Override the `logging.logfire` block in `workspace.yaml`. |
+| `LOGFIRE_TOKEN` | none | Read from the environment by the logfire SDK itself, not by this code. Declared here so it is documented and so an unknown key is not rejected. |
 
 ---
 
@@ -416,6 +417,51 @@ rolling deployment across the 8.0 fleet, so the first hybrid search tries it and
 falls back to fusing ranks client-side if the server rejects the stage — same
 RRF constant, same ordering, one extra round trip. The fallback is decided once
 per process, by asking the server rather than by reading a version number.
+
+### Where reranking runs
+
+`RERANK_MODEL` names the *provider*, and the provider already says where the
+model runs -- `local:` in this process, `voyageai:` over the network. A third,
+`database:`, says the store reranks inside its own query:
+
+```
+RERANK_MODEL=voyageai:rerank-2.5-lite   # a call from here, after retrieval
+RERANK_MODEL=local:BAAI/bge-reranker-base
+RERANK_MODEL=database:rerank-2.5-lite   # a $rerank stage in the aggregation
+```
+
+One knob rather than two. A separate `DATABASE_RERANKING` boolean would create
+four states of which two contradict each other, and leave "is it off?" needing
+both to be read; `RERANK_ENABLED=false` still turns everything off whichever
+provider is named.
+
+Nothing branches on this. `database:` resolves the client-side reranker to the
+same no-op object that `enabled: false` produces, and the store is handed a
+rerank stage-builder instead -- so the search path is identical in all three
+cases and never asks the question. It is the same trick `NoopReranker` already
+plays.
+
+Two things it will not do quietly:
+
+- With `VECTOR_STORE=qdrant` it **raises at startup**. Qdrant has no
+  server-side reranker, and both factories would otherwise decline to rerank,
+  leaving every search returning fusion order while the config said otherwise.
+- If the cluster rejects `$rankFusion`, hybrid search **raises** rather than
+  falling back. Every other fallback here trades a round trip for the same
+  answer; that one would return a different answer while still claiming to
+  rerank.
+
+**Requirements, and they are stricter than the toggle suggests.** `$rerank`
+needs a cluster on **MongoDB 8.3 or later** -- "Latest version with
+auto-upgrades" in the cluster builder -- *and* Native Reranking enabled in
+Project Settings. **8.0 with the toggle on is not enough**; measured against a
+live 8.0.29 cluster, every `$rerank` is refused. Atlas sends one generic
+message for all causes (`$rerank is not allowed or the syntax is incorrect`),
+so the store translates it into one that names both requirements.
+
+It is also a Preview feature, and billed separately from Automated Embedding
+(200M free tokens at the organization level, then $0.02/M for
+`rerank-2.5-lite`).
 
 ### Sizing a Free cluster
 

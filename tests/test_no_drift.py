@@ -140,3 +140,20 @@ def test_the_payload_writer_and_the_qdrant_indexes_agree() -> None:
     body = written.split("def to_payload(")[1].split("\ndef ")[0]
     missing = [field for field in INDEXED_FIELDS if f'"{field}"' not in body]
     assert not missing, f"indexed but never written into the payload: {missing}"
+
+
+def test_both_factories_agree_on_what_database_reranking_means() -> None:
+    """Two lists decide this, and they must decide the same way.
+
+    The reranker factory returns a no-op for these providers because the store
+    reranks; the store factory builds the store's reranker for them. If the
+    lists diverged, one side would decline to rerank and the other would too,
+    and every search would quietly return fusion order while the configuration
+    said `database:`.
+    """
+    from workspace_indexer.rerank.reranker_factory import (
+        DATABASE_PROVIDERS as rerank_side,
+    )
+    from workspace_indexer.storage.store_factory import DATABASE_PROVIDERS as store_side
+
+    assert rerank_side == store_side

@@ -54,8 +54,10 @@ from workspace_indexer.storage.mongo_index_spec import (
     text_index,
     vector_index,
 )
+from workspace_indexer.storage.no_server_rerank import NoServerRerank
 from workspace_indexer.storage.payload import to_payload, to_search_hit
 from workspace_indexer.storage.query_spec import QuerySpec
+from workspace_indexer.storage.server_reranker import ServerReranker
 
 log = get_logger("workspace_indexer.storage.mongo")
 
@@ -79,12 +81,17 @@ class MongoStore:
         database: str,
         dtype: str = "float32",
         prefer_rank_fusion: bool = True,
+        rerank: ServerReranker | None = None,
     ) -> None:
         self._client = client
         self._workspace = workspace
         self._db = client[database]
         self._dtype = dtype
         self._ensured: set[str] = set()
+        # An object rather than a flag, so nothing in the search path asks
+        # whether to rerank -- it appends whatever tail it is given, and the
+        # default implementation gives it the plain scoring projection.
+        self._rerank: ServerReranker = rerank or NoServerRerank()
         # None means "not yet discovered". Set on the first hybrid search, and
         # only ever set to False by the server actually rejecting the stage --
         # never inferred from a version string, because the rollout that gates
@@ -100,7 +107,8 @@ class MongoStore:
         self._search_indexes: bool | None = None
 
     def describe(self) -> str:
-        return f"mongodb {self._db.name}"
+        reranked = "" if self._rerank.name == "none" else f", rerank={self._rerank.name}"
+        return f"mongodb {self._db.name}{reranked}"
 
     def collection_name(self, space: EmbeddingSpace) -> str:
         """The same name Qdrant would use, so a workspace indexed into both
@@ -259,21 +267,28 @@ class MongoStore:
         name = self.collection_name(space)
         collection = self._db[name]
 
+        # Retrieve deep, return shallow -- but only when something here is
+        # going to reorder. With no server-side reranker this is `query.limit`
+        # and the pipeline is exactly what it always was.
+        depth = self._rerank.depth(query.limit)
+
         has_text = bool(query.text)
         if query.fusion == "dense_only" or not has_text:
             if query.dense is None:
                 return []
-            hits = await self._run(collection, self._dense_pipeline(query, filters, query.limit))
+            hits = await self._run(collection, self._dense_pipeline(query, filters, depth))
         elif query.fusion == "sparse_only" or query.dense is None:
-            hits = await self._run(collection, self._text_pipeline(query, filters, query.limit))
+            hits = await self._run(collection, self._text_pipeline(query, filters, depth))
         else:
-            hits = await self._hybrid(collection, query, filters)
+            hits = await self._hybrid(collection, query, filters, depth)
 
         log.info(
             "search.store",
             collection=name,
             fusion=query.fusion,
             returned=len(hits),
+            candidates=depth,
+            reranker=self._rerank.name,
             filtered=filters is not None and not filters.is_empty(),
         )
         return hits
@@ -283,6 +298,7 @@ class MongoStore:
         collection: Any,
         query: QuerySpec,
         filters: SearchFilters | None,
+        depth: int,
     ) -> list[SearchHit]:
         """Server-side RRF when the cluster has it, client-side when it does not.
 
@@ -294,8 +310,14 @@ class MongoStore:
         """
         if self._rank_fusion is not False:
             try:
-                hits = await self._run(collection, self._rank_fusion_stages(query, filters))
+                hits = await self._run(collection, self._rank_fusion_stages(query, filters, depth))
             except OperationFailure as exc:
+                # Only a rejection of the fusion stage itself means the
+                # fallback is worth trying. `_run` has already converted a
+                # $rerank rejection into a RuntimeError, which is not caught
+                # here -- so an unavailable reranker surfaces as itself rather
+                # than being misdiagnosed as an unavailable $rankFusion, which
+                # is exactly what it did the first time it happened.
                 self._rank_fusion = False
                 log_once(
                     log,
@@ -307,10 +329,27 @@ class MongoStore:
             else:
                 self._rank_fusion = True
                 return hits
+        if not isinstance(self._rerank, NoServerRerank):
+            # The client-side fallback fuses in Python, so there is no
+            # aggregation left to append `$rerank` to. Reranking each branch
+            # separately would rerank two lists nobody asked about and then
+            # fuse the results, which is not the same operation.
+            #
+            # Raised rather than degraded, deliberately. Every other fallback
+            # here trades a round trip for the same answer; this one would
+            # return a *different* answer while the configuration still claimed
+            # to be reranking, which is the silent quality loss this codebase
+            # goes out of its way to avoid.
+            raise RuntimeError(
+                "database reranking needs $rankFusion, which this deployment "
+                "rejected. Either upgrade the cluster (MongoDB 8.0+ with the "
+                "$rankFusion rollout applied) or configure a client-side "
+                "reranker, e.g. RERANK_MODEL=voyageai:rerank-2.5-lite."
+            )
         return await self._client_side_fusion(collection, query, filters)
 
     def _rank_fusion_stages(
-        self, query: QuerySpec, filters: SearchFilters | None
+        self, query: QuerySpec, filters: SearchFilters | None, depth: int
     ) -> list[dict[str, Any]]:
         """Input pipelines carry no score projection of their own.
 
@@ -331,8 +370,8 @@ class MongoStore:
                     }
                 }
             },
-            {"$limit": query.limit},
-            {"$addFields": {"score": {"$meta": "score"}}},
+            {"$limit": depth},
+            *self._rerank.stages(query.text, query.limit, "score"),
         ]
 
     async def _client_side_fusion(
@@ -347,11 +386,15 @@ class MongoStore:
         similarity and BM25 are not on a comparable scale, and averaging them
         produces an ordering that means nothing.
         """
+        # Plain tails on both branches: this path fuses the two orderings
+        # itself, so a per-branch rerank would reorder inputs the fusion is
+        # about to reorder again.
+        plain = NoServerRerank()
         dense = await self._run(
-            collection, self._dense_pipeline(query, filters, query.prefetch_limit)
+            collection, self._dense_pipeline(query, filters, query.prefetch_limit, plain)
         )
         text = await self._run(
-            collection, self._text_pipeline(query, filters, query.prefetch_limit)
+            collection, self._text_pipeline(query, filters, query.prefetch_limit, plain)
         )
 
         scores: dict[str, float] = {}
@@ -387,23 +430,31 @@ class MongoStore:
         return [{"$vectorSearch": stage}]
 
     def _dense_pipeline(
-        self, query: QuerySpec, filters: SearchFilters | None, limit: int
+        self,
+        query: QuerySpec,
+        filters: SearchFilters | None,
+        depth: int,
+        tail: ServerReranker | None = None,
     ) -> list[dict[str, Any]]:
         # `vectorSearchScore`, not `searchScore`. The two stages expose their
         # relevance under different metadata names, and asking for the wrong
         # one is not an error -- it yields a missing field, so every hit comes
         # back scored 0.0 and the ranking silently collapses.
         return [
-            *self._dense_stages(query, filters, limit),
-            {"$addFields": {"score": {"$meta": "vectorSearchScore"}}},
+            *self._dense_stages(query, filters, depth),
+            *(tail or self._rerank).stages(query.text, query.limit, "vectorSearchScore"),
         ]
 
     def _text_pipeline(
-        self, query: QuerySpec, filters: SearchFilters | None, limit: int
+        self,
+        query: QuerySpec,
+        filters: SearchFilters | None,
+        depth: int,
+        tail: ServerReranker | None = None,
     ) -> list[dict[str, Any]]:
         return [
-            *self._text_stages(query, filters, limit),
-            {"$addFields": {"score": {"$meta": "searchScore"}}},
+            *self._text_stages(query, filters, depth),
+            *(tail or self._rerank).stages(query.text, query.limit, "searchScore"),
         ]
 
     def _text_stages(
@@ -422,8 +473,11 @@ class MongoStore:
         return [{"$search": {"index": TEXT_INDEX, "compound": compound}}, {"$limit": limit}]
 
     async def _run(self, collection: Any, stages: list[dict[str, Any]]) -> list[SearchHit]:
-        cursor = await collection.aggregate(stages)
-        return [_to_hit(document) async for document in cursor]
+        try:
+            cursor = await collection.aggregate(stages)
+            return [_to_hit(document) async for document in cursor]
+        except OperationFailure as exc:
+            raise _translated(exc) from exc
 
     # ---- reading -------------------------------------------------------
 
@@ -573,6 +627,28 @@ def encode_vector(vector: Sequence[float], dtype: str = "float32") -> Binary:
             [max(-128, min(127, round(value * 127))) for value in vector], packed
         )
     return Binary.from_vector(list(vector), packed)
+
+
+def _translated(exc: OperationFailure) -> Exception:
+    """Turn Atlas's generic refusals into something actionable.
+
+    `$rerank is not allowed or the syntax is incorrect` is the entire message
+    the server sends, for every cause: a cluster below 8.3, a project without
+    Native Reranking enabled, or a genuinely malformed stage. Passing that
+    through would leave whoever hits it reading their own pipeline for a fault
+    that is not in it -- which is where an hour went the first time.
+    """
+    message = str(exc)
+    if "$rerank" not in message:
+        return exc
+    return RuntimeError(
+        "Atlas refused the $rerank stage. It needs BOTH a cluster running "
+        "MongoDB 8.3 or later -- set 'Latest version with auto-upgrades' in the "
+        "Atlas cluster builder; 8.0 is not enough even with the toggle on -- AND "
+        "Native Reranking enabled in Project Settings, which requires Project "
+        "Owner access. Until then use a client-side reranker, e.g. "
+        f"RERANK_MODEL=voyageai:rerank-2.5-lite. Server said: {message}"
+    )
 
 
 def _to_hit(document: dict[str, Any], score: float | None = None) -> SearchHit:

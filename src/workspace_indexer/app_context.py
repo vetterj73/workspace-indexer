@@ -52,6 +52,10 @@ class AppContext:
     def build(cls, config_path: Path | None = None) -> AppContext:
         config = load_workspace_config(config_path)
         settings = Settings()
+        # Applied to the config itself, before anything reads it, so every
+        # layer downstream sees one answer. Doing it per consumer is how
+        # RERANK_MODEL came to be a documented setting that nothing read.
+        config = with_rerank_overrides(config, settings)
 
         # Before anything else runs, so a failure during setup is still logged.
         configure_logging(_with_env_overrides(config, settings))
@@ -65,7 +69,7 @@ class AppContext:
             registry=ChunkerRegistry(config.workspace.name),
             embeddings=build_embedding_service(settings),
             sparse=build_sparse_backend(settings),
-            store=build_vector_store(settings, config.workspace.name),
+            store=build_vector_store(settings, config.workspace.name, config.search.rerank),
             reranker=build_reranker(config.search.rerank, settings),
             classifier=RuleClassifier(),
         )
@@ -96,6 +100,37 @@ class AppContext:
     async def close(self) -> None:
         await self.store.close()
         self.manifest.close()
+
+
+def with_rerank_overrides(config: WorkspaceConfig, settings: Settings) -> WorkspaceConfig:
+    """.env wins over workspace.yaml for reranking, as it does for logging.
+
+    Public because it is the wiring a test has to be able to assert directly --
+    the bug it fixes was invisible from the outside, since the wrong reranker
+    still returns plausible results.
+
+    Only for values actually set: `rerank_enabled` and `rerank_model` have
+    non-None defaults, so applying them unconditionally would override a
+    workspace.yaml that configured reranking deliberately. `model_fields_set`
+    is the only thing that distinguishes "the default" from "someone typed the
+    default".
+
+    These two were declared, documented and read by nothing at all. Setting
+    RERANK_MODEL had no effect, which is worse than not offering it -- and it
+    stayed that way because the reranker is built from `config.search.rerank`
+    while the setting sat in `Settings`. `test_settings_are_wired.py` now fails
+    the build for any setting nothing reads.
+    """
+    provided = settings.model_fields_set
+    updates: dict[str, object] = {}
+    if "rerank_enabled" in provided:
+        updates["enabled"] = settings.rerank_enabled
+    if "rerank_model" in provided:
+        updates["model"] = settings.rerank_model
+    if not updates:
+        return config
+    rerank = config.search.rerank.model_copy(update=updates)
+    return config.model_copy(update={"search": config.search.model_copy(update={"rerank": rerank})})
 
 
 def _with_env_overrides(config: WorkspaceConfig, settings: Settings) -> LoggingConfig:
