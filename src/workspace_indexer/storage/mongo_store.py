@@ -21,8 +21,9 @@ that in mind rather than blamed on the vectors.
 **Vectors are stored as BSON binData, not arrays of doubles.** Measured on this
 workspace's own index -- 11,049 chunks at 1024 dimensions -- the naive array
 encoding costs 15.07 KB per document against 6.15 KB for binData float32:
-162 MB versus 66 MB. On a Free cluster capped at 512 MB including indexes, that
-difference is most of the budget.
+162 MB versus 66 MB. Shared tiers cap total storage -- 512 MB on Free, 5 GB on
+Flex, both counting indexes -- so on Free that difference is most of the budget
+and on Flex it is the difference between comfortable and careful.
 
 **Fusion is server-side where the cluster allows it.** `$rankFusion` implements
 RRF natively, but it is a rolling deployment across the Atlas 8.0 fleet. Rather
@@ -611,7 +612,7 @@ def build_document(
     doubles is 2.4x smaller on this workspace's own numbers -- 6.15 KB against
     15.07 KB per document, 66 MB against 162 MB across 11,049 chunks -- which
     on a Free cluster capped at 512 MB including indexes is the difference
-    between fitting four times over and not fitting at all.
+    between fitting and not fitting at all.
     """
     return {**payload, "_id": chunk_id, DENSE_FIELD: encode_vector(vector, dtype)}
 

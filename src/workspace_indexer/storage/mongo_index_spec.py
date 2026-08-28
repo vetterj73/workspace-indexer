@@ -55,9 +55,10 @@ TEXT_FIELDS = ("source_text", "context_header", "symbol_path")
 
 # Atlas's own names for the vector element type. `float32` is the default and
 # the safe choice; `int8` is a 4x storage cut that costs some recall, and is
-# worth reaching for only when a Free cluster's 512 MB is the binding
-# constraint. Deliberately not `int1`: it supports euclidean similarity only,
-# and every measurement this project has taken is on cosine.
+# worth reaching for only when a shared cluster's storage cap is the binding
+# constraint -- 512 MB on Free, 5 GB on Flex. Deliberately not `int1`: it
+# supports euclidean similarity only, and every measurement this project has
+# taken is on cosine.
 DTYPES = ("float32", "int8")
 
 
@@ -88,7 +89,7 @@ def text_index() -> dict[str, Any]:
     """The `$search` index definition: BM25 over the text, tokens for filters.
 
     `dynamic: False` with fields named explicitly. A dynamic index would map
-    every field including the vector, which on a Free cluster is a large amount
+    every field including the vector, which on a shared cluster is a large amount
     of index built to answer questions nobody asks.
 
     Filter fields are mapped as `token`, not `string`. A `string` mapping is

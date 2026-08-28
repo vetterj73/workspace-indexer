@@ -57,7 +57,7 @@ def test_filter_fields_are_tokens_and_text_fields_are_strings() -> None:
 
 def test_the_text_index_is_not_dynamic() -> None:
     """A dynamic mapping indexes every field, including the vector -- a large
-    index on a Free cluster built to answer questions nobody asks."""
+    index on a shared cluster built to answer questions nobody asks."""
     assert text_index()["mappings"]["dynamic"] is False
 
 

@@ -3,8 +3,12 @@ name: ci
 on:
   push:
     branches: [main]
+  # Every pull request, whatever it targets. Filtering on `branches: [main]`
+  # means a stacked pull request -- one based on another branch while it waits
+  # to merge -- gets no CI at all. Not a failing check, no check: the page is
+  # simply green and empty, which is indistinguishable from passing unless you
+  # look for what is missing. Found exactly that way.
   pull_request:
-    branches: [main]
 
 # A second push supersedes the first: no point finishing a run for a commit
 # nobody will merge.

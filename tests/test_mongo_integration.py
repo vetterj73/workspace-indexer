@@ -18,20 +18,18 @@ looks exactly like a broken pipeline. `_wait_ready` is why, and a timeout there
 means a slow cluster rather than a wrong query.
 
 The fixture is **module-scoped**, and that is a correctness requirement rather
-than a speed optimisation. A Free cluster allows three search indexes in total,
+than a speed optimisation. The cluster-wide search-index budget is small,
 this store needs two, and dropping a collection does not free the quota
 immediately -- deletion is asynchronous the same way creation is. Per-test
 setup therefore fails the second test with "The maximum number of FTS indexes
 has been reached for this instance size", which is a real constraint anyone
-running this against a Free cluster will meet, not an artefact of the tests.
+running this against a shared cluster will meet, not an artefact of the tests.
 """
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from contextlib import suppress
-from typing import Any
 
 import pytest
 import pytest_asyncio
@@ -71,7 +69,7 @@ DOCUMENTS = [
 ]
 
 READY_TIMEOUT_SECONDS = 300
-# A Free cluster allows three search indexes in total and frees them lazily.
+# Three search indexes on Free, ten on Flex, and freed lazily either way.
 QUOTA_TIMEOUT_SECONDS = 180
 
 
@@ -84,9 +82,9 @@ async def store() -> AsyncIterator[MongoStore]:
     client: AsyncMongoClient[dict[str, object]] = AsyncMongoClient(CONNECTION)
     made = MongoStore(client, workspace=WORKSPACE, database=_SETTINGS.mongodb_database)
     await made.drop_collection(SPACE)
-    await _wait_quota_free(client[_SETTINGS.mongodb_database])
     try:
-        await _seed(made)
+        await _seed_when_the_quota_allows(made)
+        await _wait_ready(made)
         yield made
     finally:
         await made.drop_collection(SPACE)
@@ -121,27 +119,36 @@ async def _seed(store: MongoStore) -> None:
             for name, _, text, role in DOCUMENTS
         ],
     )
-    await _wait_ready(store)
 
 
-async def _wait_quota_free(database: Any) -> None:
-    """Wait for a dropped collection's search indexes to actually go away.
+async def _seed_when_the_quota_allows(store: MongoStore) -> None:
+    """Retry until the cluster has released indexes dropped moments ago.
 
-    Deletion is asynchronous, like creation. Dropping the collection and
-    immediately recreating it fails with "The maximum number of FTS indexes has
-    been reached for this instance size" -- which reads like a quota problem
-    but is a timing one, and is the single most confusing thing about
-    developing against a Free cluster.
+    Atlas frees a dropped collection's search indexes *lazily*, and there is
+    no way to observe the cluster-wide budget through the driver: once the
+    collection is gone, asking about its indexes returns "none" immediately
+    while Atlas is still letting go. Polling for absence therefore returns at
+    once and the create still fails. Trying to create is the only honest
+    question.
+
+    This is what makes a full-suite run self-healing. Several modules each
+    create and drop a pair of indexes; without retrying, the accumulated
+    not-yet-released ones push a run past the budget and fail every setup that
+    follows -- which presented as 36 errors and looked like a broken feature.
     """
-    for _ in range(QUOTA_TIMEOUT_SECONDS // 5):
-        outstanding = 0
-        for name in await database.list_collection_names():
-            with suppress(OperationFailure):
-                outstanding += len([i async for i in await database[name].list_search_indexes()])
-        if not outstanding:
+    for _ in range(18):
+        try:
+            await _seed(store)
+        except OperationFailure as exc:
+            if "maximum number of FTS indexes" not in str(exc):
+                raise
+            await asyncio.sleep(10)
+        else:
             return
-        await asyncio.sleep(5)
-    pytest.fail(f"search indexes still held after {QUOTA_TIMEOUT_SECONDS}s")
+    pytest.fail(
+        "Atlas never released enough search index budget. Flex allows ten; "
+        "check for other collections holding them."
+    )
 
 
 async def _wait_ready(store: MongoStore) -> None:
