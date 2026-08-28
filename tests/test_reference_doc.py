@@ -57,12 +57,45 @@ def test_every_command_is_documented(text: str) -> None:
     assert not missing, f"undocumented commands: {missing}"
 
 
+def _registered_tools() -> list[str]:
+    """Tool names read out of server_factory, not typed in here.
+
+    A hand-maintained list is the drift this whole file exists to prevent: it
+    passed happily while `impact_of` went undocumented, because nobody
+    remembered to extend it. Parsed statically rather than by building a
+    server, so this stays a documentation test with no fixtures.
+    """
+    import ast
+
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "workspace_indexer"
+        / "mcp"
+        / "server_factory.py"
+    )
+    found: list[str] = []
+    for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
+        if not isinstance(node, ast.AsyncFunctionDef):
+            continue
+        for decorator in node.decorator_list:
+            target = decorator.func if isinstance(decorator, ast.Call) else decorator
+            if isinstance(target, ast.Attribute) and target.attr == "tool":
+                found.append(node.name)
+    return found
+
+
 def test_every_mcp_tool_and_its_parameters_are_documented(text: str) -> None:
     """Tool descriptions are written for the agent and only visible at
     runtime; a human reading the repo needs them here."""
-    for tool in ("search_code", "find_guidance", "get_file_context", "list_document_types"):
-        assert f"`{tool}`" in text, tool
-    for parameter in ("include_tests", "path_prefix", "rel_path", "doc_type", "repo"):
+    tools = _registered_tools()
+    assert len(tools) >= 5, f"expected to find the registered tools, got {tools}"
+    for tool in tools:
+        # Its own entry, not merely a mention. A passing reference in someone
+        # else's paragraph is how a tool ends up "documented" with no
+        # parameters listed -- which is what this test is for.
+        assert f"**`{tool}`**" in text, tool
+    for parameter in ("include_tests", "path_prefix", "rel_path", "doc_type", "repo", "limit"):
         assert parameter in text, parameter
 
 

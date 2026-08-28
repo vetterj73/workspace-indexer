@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from workspace_indexer.mcp.document_type_resolver import ALIASES, DocumentTypeResolver
 from workspace_indexer.mcp.empty_index_error import EmptyIndexError
+from workspace_indexer.mcp.impact_report import ImpactReport
+from workspace_indexer.mcp.impact_service import ImpactService
 from workspace_indexer.mcp.query_service import CODE_EXCLUDES, GUIDANCE_TYPES, QueryService
 from workspace_indexer.mcp.result_budget import ResultBudget
 from workspace_indexer.mcp.search_response import SearchResponse
 from workspace_indexer.mcp.search_result import SearchResult
 from workspace_indexer.mcp.server_factory import (
     TAXONOMY_URI,
+    build_impact_service,
     build_mcp_server,
     build_query_service,
 )
@@ -28,6 +31,8 @@ __all__ = [
     "TAXONOMY_VERSION",
     "DocumentTypeResolver",
     "EmptyIndexError",
+    "ImpactReport",
+    "ImpactService",
     "QueryService",
     "ResultBudget",
     "SearchResponse",
@@ -38,6 +43,7 @@ __all__ = [
     "ToolCallRecorder",
     "ToolCallSink",
     "UnknownDocumentTypeError",
+    "build_impact_service",
     "build_mcp_server",
     "build_query_service",
 ]

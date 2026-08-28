@@ -473,7 +473,12 @@ def serve(config: ConfigOption = None) -> None:
     writes to stderr, which the client collects as logs, and the rolling JSONL
     file is unaffected either way.
     """
-    from workspace_indexer.mcp import EmptyIndexError, build_mcp_server, build_query_service
+    from workspace_indexer.mcp import (
+        EmptyIndexError,
+        build_impact_service,
+        build_mcp_server,
+        build_query_service,
+    )
     from workspace_indexer.mcp.server_factory import preflight
 
     ctx = _context(config)
@@ -485,7 +490,7 @@ def serve(config: ConfigOption = None) -> None:
         raise typer.Exit(code=2) from exc
 
     try:
-        build_mcp_server(build_query_service(ctx)).run()
+        build_mcp_server(build_query_service(ctx), build_impact_service(ctx)).run()
     finally:
         asyncio.run(ctx.close())
 

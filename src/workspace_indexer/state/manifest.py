@@ -21,6 +21,8 @@ from types import TracebackType
 
 from workspace_indexer.classification import Classification
 from workspace_indexer.discovery.file_candidate import FileCandidate
+from workspace_indexer.graph.dependency import Dependency
+from workspace_indexer.graph.dependent import Dependent
 from workspace_indexer.graph.import_edge import ImportEdge
 from workspace_indexer.models import Chunk, DocumentType, RunStats, SourceFile, ToolCall
 from workspace_indexer.obs.logging import get_logger
@@ -376,19 +378,85 @@ class Manifest:
             (resolved, root_label, rel_path, module),
         )
 
-    def importers_of_file(self, root_label: str, rel_path: str) -> list[tuple[str, int]]:
-        """Which indexed files import this one, as (rel_path, line).
+    def dependents_of(self, root_label: str, rel_path: str) -> list[Dependent]:
+        """Which indexed files import this one.
 
         The reverse edge, resolved. This is the half a per-project language
         server structurally cannot answer, because it spans every repository in
         the workspace rather than one project.
+
+        Joined to `files` rather than returning bare paths so the caller gets
+        each importer's doc_type in the same query. That join is what turns a
+        list of paths into "three tests and one route exercise this", which is
+        the answer an agent can act on.
         """
         rows = self._db.execute(
-            "SELECT rel_path, line FROM imports "
-            "WHERE root_label = ? AND resolved_path = ? ORDER BY rel_path, line",
+            "SELECT i.rel_path AS rel_path, i.line AS line, i.module AS module, "
+            "f.doc_type AS doc_type, f.language AS language "
+            "FROM imports i JOIN files f "
+            "ON f.root_label = i.root_label AND f.rel_path = i.rel_path "
+            "WHERE i.root_label = ? AND i.resolved_path = ? "
+            "ORDER BY i.rel_path, i.line",
             (root_label, rel_path),
         )
-        return [(str(r["rel_path"]), int(r["line"])) for r in rows]
+        return [
+            Dependent(
+                rel_path=str(r["rel_path"]),
+                line=int(r["line"]),
+                module=str(r["module"]),
+                doc_type=str(r["doc_type"]),
+                language=str(r["language"]) if r["language"] else None,
+            )
+            for r in rows
+        ]
+
+    def dependencies_of(self, root_label: str, rel_path: str) -> list[Dependency]:
+        """What this file imports, with the target's metadata where resolved.
+
+        A LEFT JOIN, not an inner one: an edge naming a package or a stdlib
+        module has no row in `files` and must still come back. Dropping it
+        would report a file as importing less than it does, which is a worse
+        lie than admitting we cannot follow the edge.
+        """
+        rows = self._db.execute(
+            "SELECT i.module AS module, i.line AS line, i.resolved_path AS resolved_path, "
+            "f.doc_type AS doc_type, f.language AS language "
+            "FROM imports i LEFT JOIN files f "
+            "ON f.root_label = i.root_label AND f.rel_path = i.resolved_path "
+            "WHERE i.root_label = ? AND i.rel_path = ? "
+            "ORDER BY i.line",
+            (root_label, rel_path),
+        )
+        return [
+            Dependency(
+                module=str(r["module"]),
+                line=int(r["line"]),
+                rel_path=str(r["resolved_path"]) if r["resolved_path"] else None,
+                doc_type=str(r["doc_type"]) if r["doc_type"] else None,
+                language=str(r["language"]) if r["language"] else None,
+            )
+            for r in rows
+        ]
+
+    def find_paths(self, needle: str, limit: int = 8) -> list[tuple[str, str]]:
+        """Indexed files whose path is, or ends with, `needle`.
+
+        Suffix matching because every path an agent holds came from a search
+        result or a traceback, and neither is guaranteed to be the full path
+        from the root. Matching on a `/` boundary so `store.py` cannot match
+        `my_store.py` -- a silent wrong-file answer is worse than no answer.
+
+        Shortest first: given `store.py` and `legacy/store.py`, the shorter
+        path is the one a person naming a file that briefly usually means.
+        """
+        escaped = needle.replace("\\", r"\\").replace("%", r"\%").replace("_", r"\_")
+        rows = self._db.execute(
+            "SELECT root_label, rel_path FROM files "
+            r"WHERE rel_path = ? OR rel_path LIKE ? ESCAPE '\' "
+            "ORDER BY LENGTH(rel_path), root_label, rel_path LIMIT ?",
+            (needle, f"%/{escaped}", limit),
+        )
+        return [(str(r["root_label"]), str(r["rel_path"])) for r in rows]
 
     def resolution_coverage(self) -> dict[str, tuple[int, int]]:
         """Per language: edges resolved to a file, and total edges.
