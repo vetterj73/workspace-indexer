@@ -16,6 +16,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+CLI = Path(__file__).resolve().parents[1] / "src" / "workspace_indexer" / "cli.py"
+
 SERVER_FACTORY = (
     Path(__file__).resolve().parents[1] / "src" / "workspace_indexer" / "mcp" / "server_factory.py"
 )
@@ -31,4 +33,30 @@ def registered_tool_names() -> list[str]:
             if isinstance(target, ast.Attribute) and target.attr == "tool":
                 found.append(node.name)
     assert found, f"no @server.tool() functions found in {SERVER_FACTORY.name}"
+    return found
+
+
+def cli_command_names() -> list[str]:
+    """Typer commands, read out of the CLI module.
+
+    Same reasoning as the tool list: the reference documents every command, and
+    a hand-typed list of them in the guard means the guard stops noticing when
+    one is added. `mirror` was added and undocumented within a minute of this
+    being written.
+    """
+    found: list[str] = []
+    for node in ast.walk(ast.parse(CLI.read_text(encoding="utf-8"))):
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        for decorator in node.decorator_list:
+            if not isinstance(decorator, ast.Call):
+                continue
+            target = decorator.func
+            if not (isinstance(target, ast.Attribute) and target.attr == "command"):
+                continue
+            # `@app.command("eval")` renames the command; the function is
+            # `evaluate`, because `eval` is a builtin.
+            named = [a for a in decorator.args if isinstance(a, ast.Constant)]
+            found.append(str(named[0].value) if named else node.name)
+    assert found, f"no @app.command() functions found in {CLI.name}"
     return found

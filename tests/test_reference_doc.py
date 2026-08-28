@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel
 
-from tests.mcp_tool_names import registered_tool_names
+from tests.mcp_tool_names import cli_command_names, registered_tool_names
 from workspace_indexer.config import Settings, WorkspaceConfig
 
 REFERENCE = Path(__file__).resolve().parents[1] / "docs" / "reference.md"
@@ -53,8 +53,11 @@ def test_every_env_setting_is_documented(text: str) -> None:
 
 
 def test_every_command_is_documented(text: str) -> None:
-    commands = ["index", "search", "status", "explain", "reproject", "eval", "serve", "watch"]
-    missing = [c for c in commands if f"### `{c}" not in text]
+    commands = cli_command_names()
+    # The name must end at a word boundary. A bare prefix check passed happily
+    # for `mirrorX` when looking for `mirror`, which is the same
+    # nearly-matching failure the guard exists to prevent.
+    missing = [c for c in commands if not any(f"### `{c}{after}" in text for after in ("`", " "))]
     assert not missing, f"undocumented commands: {missing}"
 
 
@@ -83,3 +86,10 @@ def test_the_reference_is_linked_from_the_readme() -> None:
     """A page nobody can find is not documentation."""
     readme = (REFERENCE.parents[1] / "README.md").read_text(encoding="utf-8")
     assert "docs/reference.md" in readme
+
+
+def test_the_testing_guide_is_linked_from_the_readme() -> None:
+    """A page nobody can find is not documentation -- the same rule the
+    reference is held to."""
+    readme = (REFERENCE.parents[1] / "README.md").read_text(encoding="utf-8")
+    assert "docs/testing.md" in readme

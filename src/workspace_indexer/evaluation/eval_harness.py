@@ -8,6 +8,7 @@ folklore.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any, cast
 
@@ -51,13 +52,16 @@ class EvalHarness:
         results: list[EvalResult] = []
 
         for case in cases:
+            started = time.perf_counter()
             found = await self._retriever.retrieve(case.query, limit)
+            elapsed = (time.perf_counter() - started) * 1000
             results.append(
                 EvalResult(
                     query=case.query,
                     expected=case.expect,
                     found=found,
                     first_hit_rank=_first_rank(case.expect, found),
+                    duration_ms=elapsed,
                 )
             )
 
@@ -70,6 +74,8 @@ class EvalHarness:
             recall=round(report.recall_at_k, 3),
             mrr=round(report.mrr_at_k, 3),
             misses=len(report.misses),
+            median_ms=round(report.median_ms, 1),
+            p95_ms=round(report.p95_ms, 1),
         )
         return report
 
