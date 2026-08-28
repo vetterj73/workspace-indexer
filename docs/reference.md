@@ -67,11 +67,13 @@ On Atlas the search indexes build asynchronously, so a mirror that has finished
 writing is not yet one that can answer. The command says so; `status` reports
 when they are queryable.
 
-On a **Free** cluster a mirrored collection uses both of the three available
-search indexes, which leaves none for the integration tests -- they fail with
-*"maximum number of FTS indexes"*, which looks like a test failure and is a
-capacity one. Drop the mirrored collection before running the full suite. Re-
-mirroring costs one command and no embedding tokens.
+A mirrored collection holds two search indexes for as long as it exists. That
+matters less than the *lazy release*: Atlas frees a dropped collection's
+indexes minutes after the drop, so a full test run — which creates and drops
+several pairs — can transiently exceed the budget even well under it. The
+fixtures retry rather than fail, so a run self-heals; dropping a resident
+mirror first simply makes it quicker. Re-mirroring costs one command and no
+embedding tokens.
 
 ### `reproject --dimensions N`
 
@@ -463,10 +465,26 @@ It is also a Preview feature, and billed separately from Automated Embedding
 (200M free tokens at the organization level, then $0.02/M for
 `rerank-2.5-lite`).
 
-### Sizing a Free cluster
+### Sizing a shared cluster
 
-A Free (`M0`) cluster allows **512 MB total, including indexes**, and **three
-search indexes of any kind** — this uses two, leaving one spare.
+The two limits that bind are storage and the search-index count, and both
+depend on tier. **Measured on the Flex cluster this was developed against, the
+search-index limit is 10** — created scratch collections until Atlas refused.
+
+| tier | storage | search indexes |
+|---|---|---|
+| Free (`M0`) | 512 MB | 3 |
+| Flex | 5 GB | 10 (measured) |
+| `M10`+ | 10 GB and up | far more |
+
+This store uses **two** indexes per collection, so Free allows exactly one
+indexed collection and Flex allows five.
+
+Flex counts storage as `dataSize + indexSize` from `db.stats()` —
+*uncompressed*, unlike the `storageSize` figure other tiers use. Measured with
+this workspace mirrored across: 66.8 MB of documents plus 2.1 MB of b-trees, so
+**69 MB for 11,049 chunks** — about 6.2 KB each, and **1.3% of a Flex
+cluster**.
 
 Vectors are stored as BSON `binData`, not as arrays of doubles, and that is the
 whole reason the free tier is viable. Measured on this workspace's own index of
@@ -479,11 +497,13 @@ whole reason the free tier is viable. Measured on this workspace's own index of
 | `binData` int8 | 3.15 KB | 34 MB |
 | payload alone, no vector | 2.14 KB | 23 MB |
 
-Add the mongod b-tree indexes and the mongot indexes on top. Budget roughly
-**12 KB per chunk all-in** and the 512 MB ceiling arrives at **around 40,000
-chunks** — about four times this workspace. Past that, move to a paid tier
-rather than reaching for `int8`: quantisation costs recall, and recall is the
-thing being bought.
+At 6.2 KB per chunk, **Free runs out at roughly 80,000 chunks and Flex at
+roughly 800,000** — seven times and seventy times this workspace respectively.
+On Flex, storage is not the constraint; the index count is, and five indexed
+collections is more than one workspace needs.
+
+Reach for a paid tier before reaching for `int8`: quantisation costs recall,
+and recall is the thing being bought.
 
 `MONGODB_VECTOR_DTYPE=int8` exists for when storage genuinely is the binding
 constraint. Not `int1`: Atlas supports it only with euclidean similarity, and

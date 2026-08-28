@@ -18,10 +18,10 @@ string. That asymmetry is deliberate and is the reason the Qdrant parameter
 exists at all: a contract only one backend ever runs is a contract that
 notices nothing in CI.
 
-The store is module-scoped and seeded once. Not for speed: a Free Atlas
-cluster allows three search indexes in total, this store needs two, and
-dropping a collection frees the quota asynchronously -- so per-test setup
-fails the second test outright. Mutating tests therefore use ids of their own
+The store is module-scoped and seeded once. Not for speed: the cluster-wide
+search-index budget is small -- three on Free, ten on Flex -- this store needs
+two per collection, and dropping a collection frees them asynchronously, so
+per-test setup exhausts the budget. Mutating tests therefore use ids of their own
 and clean up after themselves.
 """
 
@@ -203,11 +203,10 @@ async def store(request: pytest.FixtureRequest) -> AsyncIterator[VectorStore]:
         yield made
     finally:
         # Drop semantics asserted here rather than in a test of their own.
-        # A second indexed collection is impossible on a Free Atlas cluster --
-        # three search indexes in total, two per collection -- so the only
-        # collection available to drop is this one, and the only moment it is
-        # free to drop is after the last test. An assertion in teardown still
-        # fails the run.
+        # A second indexed collection is impossible on Free -- three search
+        # indexes in total, two per collection -- so the only collection
+        # available to drop is this one, and the only moment it is free to drop
+        # is after the last test. An assertion in teardown still fails the run.
         await made.drop_collection(space)
         assert made.collection_name(space) not in await made.collection_names()
         # Repeating must be safe: a retry after a partial failure would
@@ -243,10 +242,11 @@ async def _drop_every_contract_collection(store: VectorStore) -> None:
 async def _seed_when_the_quota_allows(store: VectorStore, space: EmbeddingSpace) -> None:
     """Retry the seed until Atlas has released the previous run's indexes.
 
-    A Free cluster allows three search indexes in total and this store needs
-    two, and a dropped collection frees them *lazily* -- so recreating too soon
-    fails with "The maximum number of FTS indexes has been reached", which
-    reads like a quota problem and is a timing one.
+    The search-index budget is per cluster and small -- three on Free, ten on
+    Flex (measured) -- and this store needs two per collection. A dropped
+    collection frees them *lazily*, so recreating too soon fails with "The
+    maximum number of FTS indexes has been reached", which reads like a quota
+    problem and is usually a timing one.
 
     Retrying rather than polling for the absence of indexes, because there is
     no cluster-level view of the quota through the protocol: once the
@@ -268,8 +268,8 @@ async def _seed_when_the_quota_allows(store: VectorStore, space: EmbeddingSpace)
         else:
             return
     pytest.fail(
-        "Atlas never released the previous run's search indexes. A Free cluster "
-        "allows three in total; check for other collections holding them."
+        "Atlas never released the previous run's search indexes. The budget is "
+        "three on Free and ten on Flex; check for other collections holding them."
     )
 
 

@@ -145,11 +145,11 @@ and answer every query with nothing for a minute afterwards. That looks exactly
 like a broken pipeline. `describe_vectors` reports whether each index is
 queryable yet, and the fixtures wait on it.
 
-**A Free cluster allows three search indexes in total**, and this store needs
-two (one `vectorSearch`, one `search`). So you cannot have two indexed
-collections. The store contract's "drop removes it" assertion lives in fixture
-teardown for this reason: the only collection available to drop is the one the
-tests just finished with.
+**The search-index budget is per cluster and small.** This store needs two per
+collection (one `vectorSearch`, one `search`). Free allows 3, so exactly one
+indexed collection; Flex allows 10 — measured, by creating scratch collections
+until Atlas refused, rather than taken from the docs. The store contract's
+"drop removes it" assertion lives in fixture teardown so it works on either.
 
 **Dropping a collection frees the quota lazily.** Drop-then-recreate fails with
 *"The maximum number of FTS indexes has been reached for this instance size"* —
@@ -159,13 +159,20 @@ their absence returns "none" immediately while Atlas is still letting go. The
 fixtures **retry the create** instead, because trying is the only honest
 question.
 
-**A mirrored index and the integration tests cannot coexist on a Free
-cluster.** This follows from the three-index limit, and it is worth stating
-because it looks like a test failure rather than a capacity one: mirror the
-real workspace across and `pytest -q` fails 36 setups with *"maximum number of
-FTS indexes"*, because the mirrored collection is holding both slots. Drop the
-mirrored collection before running the suite. Re-mirroring costs one command
-and no tokens, so this is cheap either way.
+**The lazy release is what actually bites, not the budget.** Mirroring the real
+workspace across and running `pytest -q` failed 36 setups with *"maximum number
+of FTS indexes"* — on a Flex cluster with a budget of 10 and at most 6 in use.
+The cause is not capacity: a full run creates and drops several index pairs,
+and the dropped ones are still counted for minutes afterwards, so they
+accumulate past the limit.
+
+I first wrote this up as a Free-tier capacity limit. That was wrong, and wrong
+in the way worth recording: the error message says "maximum number of FTS
+indexes", which reads as a quota, and the fix that worked (drop the mirror)
+was consistent with the wrong explanation. The fixtures now **retry the
+create** rather than polling for the absence of indexes, which cannot work --
+once the collection is gone, asking about its indexes returns "none"
+immediately while Atlas is still letting go. A full run self-heals.
 
 **`AsyncMongoClient` binds to the event loop it was created on** and raises
 rather than reconnecting. A module-scoped fixture therefore needs its tests on
