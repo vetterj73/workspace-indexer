@@ -18,13 +18,14 @@ from workspace_indexer.models import EmbeddingSpace, SparseVec
 from workspace_indexer.obs.logging import get_logger
 from workspace_indexer.search.matryoshka import truncate
 from workspace_indexer.state import Manifest
-from workspace_indexer.storage.qdrant_store import DENSE_VECTOR, SPARSE_VECTOR, QdrantStore
+from workspace_indexer.storage.qdrant_store import DENSE_VECTOR, SPARSE_VECTOR
+from workspace_indexer.storage.vector_store import VectorStore
 
 log = get_logger("workspace_indexer.search.reproject")
 
 
 class Reprojector:
-    def __init__(self, store: QdrantStore, manifest: Manifest) -> None:
+    def __init__(self, store: VectorStore, manifest: Manifest) -> None:
         self._store = store
         # The manifest is not optional. Writing vectors without recording them
         # leaves the store and the manifest disagreeing, and a later index

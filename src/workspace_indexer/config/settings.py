@@ -53,12 +53,23 @@ class Settings(BaseSettings):
     rerank_model: str = "voyageai:rerank-2.5-lite"
 
     # ---- vector store ----
-    vector_store: Literal["qdrant"] = "qdrant"
+    vector_store: Literal["qdrant", "mongodb"] = "qdrant"
     qdrant_mode: Literal["embedded", "server"] = "embedded"
     qdrant_path: Path = Path("./data/qdrant")
     qdrant_url: str = "http://localhost:6333"
     qdrant_api_key: str | None = None
     qdrant_on_disk_payload: bool = True
+
+    # ---- mongodb (only read when vector_store is mongodb) ----
+    # The whole credential, so `repr=False`: a connection string carries the
+    # password inline, and Settings gets logged and printed.
+    mongodb_connection_string: str | None = Field(default=None, repr=False)
+    mongodb_database: str = "workspace_indexer"
+    # How the dense vector is packed into BSON. `float32` is binData at 4 bytes
+    # per dimension -- 2.4x smaller than an array of doubles, measured. `int8`
+    # is 4x smaller again and costs some recall; reach for it only when a Free
+    # cluster's 512 MB is the binding constraint.
+    mongodb_vector_dtype: Literal["float32", "int8"] = "float32"
 
     # ---- state ----
     state_db: Path = Path("./data/manifest.sqlite3")

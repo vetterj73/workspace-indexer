@@ -9,7 +9,6 @@ leaves you wondering whether `mcp.server` is ours or the SDK's.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Annotated
 
 from mcp.server import MCPServer
@@ -227,10 +226,8 @@ async def preflight(ctx: AppContext) -> None:
         return
     raise EmptyIndexError(
         space=ctx.space.slug(),
-        mode=(
-            f"qdrant server at {ctx.settings.qdrant_url}"
-            if ctx.settings.qdrant_mode == "server"
-            else f"embedded qdrant at {Path(ctx.settings.qdrant_path).resolve()}"
-        ),
+        # Asked of the store rather than reconstructed from settings, which
+        # reported every backend as Qdrant the moment a second one existed.
+        mode=ctx.store.describe(),
         detail=f"collection {ctx.store.collection_name(ctx.space)} holds no points.",
     )

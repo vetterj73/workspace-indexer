@@ -42,9 +42,15 @@ class QdrantStore:
         on_disk_payload: bool = True,
         upsert_batch_size: int = 256,
         payload_indexes: bool = True,
+        location: str = "qdrant",
     ) -> None:
         self._client = client
         self._workspace = workspace
+        # Passed in rather than read off the client's private attributes. The
+        # client stores its target under a different name per mode, so sniffing
+        # it works for embedded and silently returns nothing for server -- an
+        # error message that omits the URL when the URL is the whole problem.
+        self._location = location
         self._on_disk_payload = on_disk_payload
         # Payload indexes are a no-op in embedded mode, and asking for them
         # emits a warning per field. Passed in rather than sniffed off the
@@ -55,6 +61,10 @@ class QdrantStore:
 
     def collection_name(self, space: EmbeddingSpace) -> str:
         return f"{self._workspace}__{space.slug()}"
+
+    def describe(self) -> str:
+        """Where this store is, in words a human can act on."""
+        return self._location
 
     async def ensure_collection(self, space: EmbeddingSpace) -> None:
         name = self.collection_name(space)
