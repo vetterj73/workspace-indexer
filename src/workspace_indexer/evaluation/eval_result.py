@@ -29,6 +29,12 @@ class EvalResult(BaseModel):
     # 1-based position of the first expected file, or None if it never
     # appeared. This is what MRR is computed from.
     first_hit_rank: int | None = None
+    # Wall time for the whole retrieval: query embedding, both branches,
+    # fusion and reranking. End to end rather than store-only, because that is
+    # what an agent waits for -- and because a backend that fuses server-side
+    # trades a round trip against work we would otherwise do here, which a
+    # store-only number would hide.
+    duration_ms: float = 0.0
 
     @property
     def recall(self) -> float:

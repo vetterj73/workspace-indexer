@@ -127,6 +127,20 @@ and flag, every `workspace.yaml` key and `.env` variable with its default, and
 every MCP tool with its parameters. A test asserts it lists everything that
 exists, so it cannot quietly fall behind the code.
 
+## Changing it
+
+**[docs/testing.md](docs/testing.md)** is the page to read before touching the
+MCP surface, the storage seam or logging. It covers what the guard suites are
+for -- each one exists because of a real failure that was silent and unrelated
+to the code being changed at the time -- and the operational facts that are
+easy to lose: how structlog's processor list interacts with `capture_logs`, and
+the four things about Atlas that will otherwise cost you an afternoon.
+
+The short version: `poetry run pytest -q -m "not integration"` is what CI runs,
+and **before merging anything that changes those areas, run `poetry run pytest
+-q` with no marker filter.** Integration tests do not run in CI, which is
+exactly how one of them went stale for two pull requests.
+
 ## Running it somewhere else
 
 This README is a developer quickstart. **[docs/deployment.md](docs/deployment.md)**

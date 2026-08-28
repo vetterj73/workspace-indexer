@@ -30,3 +30,29 @@ class EvalReport(BaseModel):
     @property
     def misses(self) -> list[EvalResult]:
         return [r for r in self.results if r.recall < 1.0]
+
+    @property
+    def median_ms(self) -> float:
+        """The typical query. Median rather than mean: one cold start or one
+        retried request drags a mean over sixteen cases far enough to change
+        which backend looks faster."""
+        return self._percentile(0.5)
+
+    @property
+    def p95_ms(self) -> float:
+        """The tail. This is the number an agent notices, because a tool it
+        calls a dozen times in a task hits the tail every task."""
+        return self._percentile(0.95)
+
+    @property
+    def slowest_ms(self) -> float:
+        return max((r.duration_ms for r in self.results), default=0.0)
+
+    def _percentile(self, share: float) -> float:
+        timings = sorted(r.duration_ms for r in self.results)
+        if not timings:
+            return 0.0
+        # Nearest-rank. Exact interpolation is false precision over sixteen
+        # samples, and the ranking between two backends is what this decides.
+        index = min(len(timings) - 1, int(round(share * (len(timings) - 1))))
+        return timings[index]

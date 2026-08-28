@@ -14,6 +14,7 @@ from workspace_indexer.storage.qdrant_store import (
 )
 from workspace_indexer.storage.query_spec import QuerySpec
 from workspace_indexer.storage.store_factory import build_qdrant_client, build_vector_store
+from workspace_indexer.storage.store_mirror import StoreMirror
 from workspace_indexer.storage.vector_store import VectorStore
 
 __all__ = [
@@ -22,6 +23,7 @@ __all__ = [
     "SPARSE_VECTOR",
     "QdrantStore",
     "QuerySpec",
+    "StoreMirror",
     "VectorStore",
     "ancestors_of",
     "build_filter",

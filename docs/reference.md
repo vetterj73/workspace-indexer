@@ -51,6 +51,28 @@ manifest, which `index --force` fixes.
 Dump the chunks one file produces, with symbols and line ranges. The
 chunk-quality debugging tool; no API calls.
 
+### `mirror --to qdrant|mongodb`
+
+Copies the current collection into the other backend. **No re-embedding** --
+vectors are the expensive part of an index and they are backend neutral, so the
+same floats mean the same thing in either store.
+
+Resumes by default: points are keyed by chunk id, so re-running after an
+interruption replaces rather than duplicates. `--overwrite` drops the target
+collection first, which is the only way to make the target *match* the source
+rather than merely include it -- a point deleted from the source is not deleted
+from the target by a plain mirror, because nothing scrolls past it to say so.
+
+On Atlas the search indexes build asynchronously, so a mirror that has finished
+writing is not yet one that can answer. The command says so; `status` reports
+when they are queryable.
+
+On a **Free** cluster a mirrored collection uses both of the three available
+search indexes, which leaves none for the integration tests -- they fail with
+*"maximum number of FTS indexes"*, which looks like a test failure and is a
+capacity one. Drop the mirrored collection before running the full suite. Re-
+mirroring costs one command and no embedding tokens.
+
 ### `reproject --dimensions N`
 
 Derive a narrower collection by Matryoshka truncation, with no re-embedding.
@@ -420,6 +442,76 @@ thing being bought.
 `MONGODB_VECTOR_DTYPE=int8` exists for when storage genuinely is the binding
 constraint. Not `int1`: Atlas supports it only with euclidean similarity, and
 every measurement this project has taken is on cosine.
+
+### Measured: Qdrant against Atlas
+
+Same 11,049 vectors in both, copied with `mirror` rather than re-embedded, so
+any difference is the store and not the embeddings. Same 16-case eval dataset,
+same query embeddings. Numbers reproduce exactly across runs — retrieval is
+deterministic given a fixed index.
+
+| | recall@10 | MRR@10 | median end-to-end | store only |
+|---|---|---|---|---|
+| Qdrant, no rerank | 0.750 | 0.356 | 247 ms | **9.8 ms** |
+| Atlas, no rerank | **0.844** | **0.500** | 383 ms | 95.9 ms |
+| Qdrant, rerank | **0.875** | **0.679** | **560 ms** | — |
+| Atlas, rerank | 0.812 | 0.661 | 740 ms | — |
+
+**Relevance: it depends entirely on whether the reranker is on**, which is not
+a hedge — it is the finding.
+
+Without reranking Atlas is clearly better: +0.094 recall and +0.144 MRR. Its
+keyword branch is Lucene, with real analysis behind it, against our locally
+computed fastembed BM25.
+
+With reranking the order reverses. The explanation is in the candidate set,
+measured directly:
+
+| depth | Qdrant recall | Atlas recall |
+|---|---|---|
+| @10 | 0.750 | 0.844 |
+| @20 | 0.875 | 0.844 |
+| @50 | **0.906** | 0.844 |
+
+**Atlas is flat.** Whatever it misses at 10 it still misses at 50. Qdrant keeps
+finding more with depth. Both genuinely return 50 hits — Atlas's are simply
+concentrated in fewer files (20 distinct against Qdrant's 26 on the same
+query), so extra depth buys more chunks of documents it already found.
+
+A reranker consumes the candidate set and does the ordering itself. So Atlas's
+advantage — ordering the head well — is exactly the part the reranker replaces,
+while Qdrant's advantage — a more file-diverse tail — is what the reranker has
+to work with. **Ordering quality stops mattering once something else does the
+ordering; candidate diversity starts mattering more.**
+
+**Latency: Qdrant, decisively, and about half of it is geography.** Store-only
+medians, query embedding paid once and shared:
+
+| branch | Qdrant | Atlas | difference |
+|---|---|---|---|
+| hybrid (RRF) | 9.8 ms | 95.9 ms | +86 ms |
+| dense only | 5.9 ms | 71.6 ms | +66 ms |
+| keyword only | 3.9 ms | 65.6 ms | +62 ms |
+
+A bare round trip is 2.5 ms to local Qdrant and 50 ms to this Atlas cluster, so
+roughly 50 ms of the gap is network distance rather than engine speed. Net of
+that, Atlas does about 46 ms of work per hybrid query against Qdrant's ~7 ms.
+The cluster is also `M0`, which is shared and throttled; a dedicated tier would
+narrow this and cannot close the network half.
+
+End to end the gap shrinks to about 180 ms, because the query embedding and the
+rerank call are identical for both and dominate.
+
+**The honest summary, with everything else held equal:** Qdrant is faster by a
+margin no tuning will erase at this distance, and marginally better on the
+retrieval quality that actually ships (reranked). Atlas is better at raw
+ranking and is the stronger choice if you would otherwise run no reranker at
+all — which is also the configuration where its latency hurts least, since
+there is no second API call to hide behind.
+
+Neither difference is large enough to override an operational reason. If a
+project already runs MongoDB, this measurement is not an argument against using
+it.
 
 ### Two Atlas features deliberately not used
 

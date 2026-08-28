@@ -1,0 +1,53 @@
+name: integration
+
+# Never on a pull request. These tests need credentials, reach real services
+# and cost money -- running them on every push would spend tokens on branches
+# nobody merges, and would hand a fork's pull request our secrets.
+on:
+  workflow_dispatch:
+  schedule:
+    # Weekly. Frequent enough to catch rot before it is weeks old, rare enough
+    # that a mostly-skipping run costs nothing worth counting.
+    - cron: "0 6 * * 1"
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # Every test here skips cleanly when its credential is absent, so this
+    # workflow is safe to run in a fork or before any secret is configured --
+    # it simply verifies less. What it must never do is fail in a way that
+    # cannot be told apart from "the credential is missing", which is why the
+    # summary step below reports what actually ran.
+    env:
+      VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
+      MONGODB_CONNECTION_STRING: ${{ secrets.MONGODB_CONNECTION_STRING }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install poetry
+        run: pipx install poetry
+
+      - name: Cache the virtualenv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-py312-${{ hashFiles('poetry.lock') }}
+
+      - name: Install dependencies
+        run: |
+          poetry config virtualenvs.in-project true
+          poetry install --all-extras
+
+      # `-rs` lists every skip with its reason, so the run says which halves
+      # were actually exercised. A green run that skipped everything looks
+      # identical to a green run that verified everything, and only this line
+      # tells them apart.
+      - name: Integration tests
+        run: poetry run pytest -q -m integration -rs

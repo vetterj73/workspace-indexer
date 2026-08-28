@@ -33,6 +33,7 @@ from workspace_indexer.graph import SUPPORTED as IMPORT_LANGUAGES
 from workspace_indexer.mcp import QueryService, TaxonomyService
 from workspace_indexer.models import EmbeddingSpace, FileKind, RunStats, SearchFilters
 from workspace_indexer.search import Reprojector, SearchRequest
+from workspace_indexer.storage import StoreMirror, build_vector_store
 
 app = typer.Typer(
     add_completion=False,
@@ -275,6 +276,75 @@ def explain(
 
 
 @app.command()
+def mirror(
+    to: Annotated[str, typer.Option("--to", help="Target backend: qdrant | mongodb")],
+    config: ConfigOption = None,
+    overwrite: Annotated[
+        bool, typer.Option("--overwrite/--resume", help="Drop the target collection first")
+    ] = False,
+) -> None:
+    """Copy the current collection into the other backend. No re-embedding.
+
+    Vectors are the expensive part of an index and they are backend neutral:
+    the same floats mean the same thing in Qdrant and in Atlas. So trying a
+    second store, or migrating to one, costs a scroll and a write rather than
+    the whole embedding bill again.
+
+    It is also the only honest way to compare two backends. Re-embedding into
+    the second one would give it a different set of vectors, and any difference
+    in the numbers afterwards could be the store or could be the embeddings,
+    with no way to tell which.
+
+    Resumes by default: points are keyed by chunk id, so re-running after an
+    interruption replaces rather than duplicates.
+    """
+
+    async def run() -> None:
+        ctx = _context(config)
+        target_settings = ctx.settings.model_copy(update={"vector_store": to})
+        if target_settings.vector_store == ctx.settings.vector_store:
+            console.print(
+                f"[red]--to {to} is the backend already configured "
+                f"(VECTOR_STORE={ctx.settings.vector_store}).[/red]"
+            )
+            raise typer.Exit(code=2)
+
+        target = build_vector_store(target_settings, ctx.config.workspace.name)
+        try:
+            source_count = await ctx.store.count(ctx.space)
+            if not source_count:
+                console.print(
+                    f"[red]{ctx.store.describe()} holds no points for "
+                    f"{ctx.space.slug()}; there is nothing to mirror.[/red]"
+                )
+                raise typer.Exit(code=2)
+
+            console.print(
+                f"Mirroring [cyan]{source_count:,}[/cyan] points "
+                f"{ctx.store.describe()} -> {target.describe()}"
+            )
+            moved = await StoreMirror(ctx.store, target).mirror(ctx.space, overwrite=overwrite)
+            console.print(
+                f"Wrote [cyan]{moved:,}[/cyan] points to "
+                f"[cyan]{target.collection_name(ctx.space)}[/cyan]."
+            )
+            # Atlas builds its search indexes asynchronously, so a mirror that
+            # has finished writing is not yet a mirror that can answer.
+            ready = await target.describe_vectors(ctx.space)
+            if not (ready["dense"] and ready["sparse"]):
+                console.print(
+                    "[yellow]The target's search indexes are still building. "
+                    "Queries return nothing until they are ready; check with "
+                    "`workspace-indexer status`.[/yellow]"
+                )
+        finally:
+            await target.close()
+            await ctx.close()
+
+    asyncio.run(run())
+
+
+@app.command()
 def reproject(
     dimensions: Annotated[int, typer.Option("--dimensions", "-d")],
     config: ConfigOption = None,
@@ -369,6 +439,8 @@ def evaluate(
                 mrr_at_k=report.mrr_at_k,
                 case_count=len(report.results),
                 miss_count=len(report.misses),
+                median_ms=report.median_ms,
+                p95_ms=report.p95_ms,
                 results=report.results,
             )
             # Written before the comparison, so an interrupted comparison does
@@ -384,6 +456,14 @@ def evaluate(
         console.print(f"  recall@{limit}: [cyan]{report.recall_at_k:.3f}[/cyan]")
         console.print(f"  MRR@{limit}:    [cyan]{report.mrr_at_k:.3f}[/cyan]")
         console.print(f"  cases: {len(report.results)}, misses: {len(report.misses)}")
+        # End-to-end per query: embedding, both branches, fusion, reranking.
+        # Reported beside relevance because the two trade against each other,
+        # and a backend is chosen on both.
+        console.print(
+            f"  latency:   median [cyan]{report.median_ms:.0f} ms[/cyan], "
+            f"p95 [cyan]{report.p95_ms:.0f} ms[/cyan], "
+            f"slowest {report.slowest_ms:.0f} ms"
+        )
         for miss in report.misses:
             console.print(f"  [yellow]miss[/yellow] {miss.query}")
             console.print(f"    expected {miss.expected}")

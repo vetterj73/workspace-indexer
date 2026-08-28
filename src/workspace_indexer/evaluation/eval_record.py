@@ -45,6 +45,12 @@ class EvalRecord(BaseModel):
     case_count: int
     miss_count: int
 
+    # Latency travels with relevance because the two trade against each other
+    # and a backend choice needs both. Defaulted so records written before
+    # timing existed still load rather than failing the comparison outright.
+    median_ms: float = 0.0
+    p95_ms: float = 0.0
+
     results: list[EvalResult] = Field(default_factory=list[EvalResult])
 
     def comparable_to(self, other: EvalRecord) -> bool:

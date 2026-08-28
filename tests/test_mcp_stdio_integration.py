@@ -22,6 +22,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.types import TextContent
 
+from tests.mcp_tool_names import registered_tool_names
 from workspace_indexer.mcp import TAXONOMY_URI
 from workspace_indexer.models import DocumentType
 
@@ -29,28 +30,6 @@ pytestmark = pytest.mark.integration
 
 REPO = Path(__file__).resolve().parents[1]
 CLI = REPO / ".venv" / "bin" / "workspace-indexer"
-
-
-def registered_tool_names() -> list[str]:
-    """Tool names parsed out of server_factory.
-
-    Static rather than by building a server: this module deliberately talks to
-    a subprocess, and importing the server here to enumerate it would assert
-    against a different object than the one under test.
-    """
-    import ast
-
-    source = REPO / "src" / "workspace_indexer" / "mcp" / "server_factory.py"
-    found: list[str] = []
-    for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
-        if not isinstance(node, ast.AsyncFunctionDef):
-            continue
-        for decorator in node.decorator_list:
-            target = decorator.func if isinstance(decorator, ast.Call) else decorator
-            if isinstance(target, ast.Attribute) and target.attr == "tool":
-                found.append(node.name)
-    assert found, "no @server.tool() functions found; the parser needs updating"
-    return found
 
 
 def _params() -> StdioServerParameters:

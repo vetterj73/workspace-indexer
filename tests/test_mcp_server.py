@@ -22,6 +22,7 @@ from qdrant_client import AsyncQdrantClient
 from tests.conftest import make_source
 from tests.fake_embedding_backend import FakeEmbeddingBackend
 from tests.fake_sparse_backend import FakeSparseBackend
+from tests.mcp_tool_names import registered_tool_names
 from workspace_indexer.app_context import AppContext
 from workspace_indexer.chunking.chunk_factory import build_chunk
 from workspace_indexer.config import RerankConfig, SearchSection, Settings
@@ -111,13 +112,7 @@ def server(queries: QueryService, tmp_path: Path) -> MCPServer:
 
 async def test_every_tool_is_registered(server: MCPServer) -> None:
     tools = await server.list_tools()
-    assert {t.name for t in tools} == {
-        "search_code",
-        "find_guidance",
-        "get_file_context",
-        "list_document_types",
-        "impact_of",
-    }
+    assert {t.name for t in tools} == set(registered_tool_names())
 
 
 async def test_tool_descriptions_carry_the_vocabulary(server: MCPServer) -> None:
