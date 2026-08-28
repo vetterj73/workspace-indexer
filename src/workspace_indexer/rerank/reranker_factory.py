@@ -19,7 +19,13 @@ log = get_logger("workspace_indexer.rerank.factory")
 
 VOYAGE_PROVIDERS = frozenset({"voyageai", "voyage"})
 LOCAL_PROVIDERS = frozenset({"fastembed", "local"})
-KNOWN_PROVIDERS = VOYAGE_PROVIDERS | LOCAL_PROVIDERS
+# Not a provider of a client-side reranker: a declaration that the *store*
+# reranks, inside the query, so nothing runs here at all. It sits in the same
+# field because that field already says where a reranker runs -- `local:`
+# in this process, `voyageai:` over the network -- and a second setting would
+# create states that contradict each other.
+DATABASE_PROVIDERS = frozenset({"database", "server"})
+KNOWN_PROVIDERS = VOYAGE_PROVIDERS | LOCAL_PROVIDERS | DATABASE_PROVIDERS
 
 
 def build_reranker(config: RerankConfig, settings: Settings) -> Reranker:
@@ -28,6 +34,20 @@ def build_reranker(config: RerankConfig, settings: Settings) -> Reranker:
         return NoopReranker()
 
     provider = config.provider
+    if provider in DATABASE_PROVIDERS:
+        # The store appends a rerank stage to its own aggregation, so the
+        # search path must not rerank a second time. Expressed as the no-op
+        # object rather than a flag, which is why SearchService needs no
+        # knowledge of any of this.
+        log_once(
+            log,
+            "rerank:database",
+            "rerank.delegated_to_store",
+            model=config.model_id,
+            detail="reranking runs inside the query; no client-side rerank call is made",
+        )
+        return NoopReranker()
+
     if provider in LOCAL_PROVIDERS:
         return _build(lambda: LocalCrossEncoderReranker(config, config.model_id), provider)
 
