@@ -15,10 +15,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import structlog.testing
 
 from workspace_indexer.config import FileLogConfig, LoggingConfig
 from workspace_indexer.obs.context import bound, new_run_id
-from workspace_indexer.obs.logging import configure_logging, get_logger, log_once, reset_for_tests
+from workspace_indexer.obs.logging import (
+    configure_logging,
+    get_logger,
+    log_once,
+    reset_for_tests,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -146,3 +152,51 @@ def test_console_off_leaves_only_the_file_handler(tmp_path: Path) -> None:
 
 def test_run_ids_are_distinct() -> None:
     assert new_run_id() != new_run_id()
+
+
+def test_capture_logs_still_sees_a_logger_bound_before_a_reconfigure(tmp_path: Path) -> None:
+    """The bug behind #47, in five lines.
+
+    `cache_logger_on_first_use` freezes a bound logger against the processor
+    list that was live when it was first used. structlog's own `capture_logs`
+    mutates that list *in place* rather than replacing it, specifically so
+    cached loggers keep seeing the current chain -- its source says so.
+
+    Handing structlog a brand-new list on a second `configure` breaks that
+    contract: the cached logger holds the old list, `capture_logs` mutates the
+    new one, and the event escapes to the real sinks. The test that asserts on
+    it then sees an empty list, which reads exactly like "the code never
+    logged" -- so this fails in the direction that looks like a passing
+    assertion about absence.
+
+    Every module in this codebase binds its logger at import, so this is not a
+    hypothetical: it took out two watcher tests in the full suite while CI,
+    which deselects integration tests, stayed green.
+    """
+    configure_logging(_config(tmp_path))
+    log = get_logger("workspace_indexer.probe")
+    log.info("bind me")  # caches the logger against the first processor list
+
+    reset_for_tests()
+    configure_logging(_config(tmp_path))  # a second list would orphan the cache
+
+    with structlog.testing.capture_logs() as captured:
+        log.info("after.reconfigure", n=1)
+
+    assert [e["event"] for e in captured] == ["after.reconfigure"]
+
+
+def test_the_processor_list_keeps_its_identity_across_reconfigures(tmp_path: Path) -> None:
+    """The invariant the test above depends on, asserted directly.
+
+    Stated as identity rather than equality on purpose: equal contents in a new
+    list is exactly the state that breaks caching, and is what the code did
+    before.
+    """
+    configure_logging(_config(tmp_path))
+    first = structlog.get_config()["processors"]
+
+    reset_for_tests()
+    configure_logging(_config(tmp_path))
+
+    assert structlog.get_config()["processors"] is first

@@ -31,6 +31,28 @@ REPO = Path(__file__).resolve().parents[1]
 CLI = REPO / ".venv" / "bin" / "workspace-indexer"
 
 
+def registered_tool_names() -> list[str]:
+    """Tool names parsed out of server_factory.
+
+    Static rather than by building a server: this module deliberately talks to
+    a subprocess, and importing the server here to enumerate it would assert
+    against a different object than the one under test.
+    """
+    import ast
+
+    source = REPO / "src" / "workspace_indexer" / "mcp" / "server_factory.py"
+    found: list[str] = []
+    for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
+        if not isinstance(node, ast.AsyncFunctionDef):
+            continue
+        for decorator in node.decorator_list:
+            target = decorator.func if isinstance(decorator, ast.Call) else decorator
+            if isinstance(target, ast.Attribute) and target.attr == "tool":
+                found.append(node.name)
+    assert found, "no @server.tool() functions found; the parser needs updating"
+    return found
+
+
 def _params() -> StdioServerParameters:
     command = str(CLI) if CLI.exists() else shutil.which("workspace-indexer") or ""
     if not command:
@@ -52,12 +74,11 @@ async def test_a_client_can_use_every_tool_over_stdio() -> None:
         await session.initialize()
 
         tools = await session.list_tools()
-        assert sorted(t.name for t in tools.tools) == [
-            "find_guidance",
-            "get_file_context",
-            "list_document_types",
-            "search_code",
-        ]
+        # Read out of server_factory rather than typed in here. The hand-written
+        # list was already wrong once: `impact_of` shipped and this test kept
+        # asserting the four tools that existed before it, and stayed green
+        # because CI runs -m "not integration" and nobody ran it by hand.
+        assert sorted(t.name for t in tools.tools) == sorted(registered_tool_names())
 
         resources = await session.list_resources()
         assert [str(r.uri) for r in resources.resources] == [TAXONOMY_URI]
@@ -71,6 +92,19 @@ async def test_a_client_can_use_every_tool_over_stdio() -> None:
         assert hits["results"]
         for result in hits["results"]:
             assert result["location"].count(":") >= 1
+
+        # Every tool, not merely every registration: the graph tools answer
+        # from the manifest rather than the vector store, so a serve process
+        # that opened one and not the other would pass everything above.
+        impact = _body(
+            await session.call_tool(
+                "impact_of", {"rel_path": hits["results"][0]["rel_path"], "limit": 5}
+            )
+        )
+        assert impact["rel_path"] == hits["results"][0]["rel_path"]
+        # Both directions present as keys even when empty, and `note` is what
+        # keeps an empty answer from reading as "nothing depends on this".
+        assert "depends_on" in impact and "used_by" in impact
 
 
 async def test_stdout_is_not_corrupted_by_our_own_logging() -> None:
