@@ -18,6 +18,7 @@ import pytest
 
 from workspace_indexer.config import WorkspaceConfig
 from workspace_indexer.models import FileKind, RepoInfo, SourceFile, sha256_text
+from workspace_indexer.obs.logging import forget_once_only
 
 # What the `config_for` fixture hands back. Named so tests can annotate it
 # instead of accepting an untyped fixture argument.
@@ -99,6 +100,25 @@ Page the on-call engineer first.
 
 Watch the dashboard.
 """
+
+
+@pytest.fixture(autouse=True)
+def _forget_once_only_logs() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
+    """Clear the log-once ledger between tests.
+
+    `log_once` dedupes for the life of the *process*, which is right in
+    production and wrong across a test session: whichever test happens to run
+    first consumes the event, and any later test asserting on it fails
+    depending on ordering. Two tests assert on once-only events today
+    (`rerank.skipped`, `store.search_indexes_unavailable`), and both were one
+    reordering away from being flaky.
+
+    Same family as #47 -- state surviving between tests -- and cheap enough
+    that there is no reason to wait for it to bite.
+    """
+    forget_once_only()
+    yield
+    forget_once_only()
 
 
 @pytest.fixture

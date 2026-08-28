@@ -35,6 +35,27 @@ _NOISY = (
 _configured = False
 _seen_once: set[str] = set()
 
+# One list instance for the life of the process, refilled rather than replaced.
+#
+# This is load-bearing, and the reason is buried in structlog. With
+# `cache_logger_on_first_use=True` a logger is frozen against the processor
+# list that was live the first time it was used, and every module here binds
+# its logger at import. structlog's own `capture_logs` mutates the configured
+# list *in place* precisely so those cached loggers keep seeing the current
+# chain -- its source carries a comment saying so.
+#
+# Handing structlog a fresh list on a second `configure` breaks that contract:
+# the cached logger holds the old list, `capture_logs` mutates the new one, and
+# the event goes to the real sinks instead of the capture. The test asserting
+# on it sees an empty list, which reads exactly like "the code never logged".
+# That failed in the direction that looks like a passing assertion about
+# absence, and it took out two watcher tests in the full suite (#47).
+#
+# The alternative is `cache_logger_on_first_use=False`, which also works and
+# costs about 22% per log call (38 -> 47 us here). Keeping the cache and the
+# list identity costs nothing.
+_PROCESSORS: list[Any] = []
+
 
 def _shared_processors() -> list[Any]:
     """Processors applied to every event, whatever the sink."""
@@ -58,8 +79,10 @@ def configure_logging(cfg: LoggingConfig) -> None:
 
     shared = _shared_processors()
 
+    # Slice assignment, not reassignment: see _PROCESSORS above.
+    _PROCESSORS[:] = [*shared, structlog.stdlib.ProcessorFormatter.wrap_for_formatter]
     structlog.configure(
-        processors=[*shared, structlog.stdlib.ProcessorFormatter.wrap_for_formatter],
+        processors=_PROCESSORS,
         logger_factory=structlog.stdlib.LoggerFactory(),
         wrapper_class=structlog.stdlib.BoundLogger,
         cache_logger_on_first_use=True,
@@ -153,12 +176,30 @@ def log_once(logger: structlog.stdlib.BoundLogger, key: str, event: str, **field
     logger.info(event, **fields)
 
 
+def forget_once_only() -> None:
+    """Clear the log-once ledger without touching the sinks.
+
+    `log_once` dedupes for the life of the process, which is right in
+    production and wrong across a test session: whichever test runs first
+    consumes the event, and a later test asserting on it fails depending on
+    ordering. `reset_for_tests` also clears this, but tears down the whole
+    logging configuration to do it -- too heavy to run before every test.
+    """
+    _seen_once.clear()
+
+
 def reset_for_tests() -> None:
     """Allow a test to reconfigure logging from scratch."""
     global _configured
     _configured = False
     _seen_once.clear()
     structlog.reset_defaults()
+    # reset_defaults installs a list of structlog's own, which would orphan
+    # every logger already cached against ours. Take its contents into our list
+    # and reinstall that, so identity survives the reset and the default
+    # behaviour survives with it.
+    _PROCESSORS[:] = structlog.get_config()["processors"]
+    structlog.configure(processors=_PROCESSORS)
     root = logging.getLogger()
     for handler in list(root.handlers):
         handler.close()
