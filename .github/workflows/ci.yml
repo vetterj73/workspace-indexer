@@ -60,9 +60,32 @@ jobs:
       - name: Types (pyright, strict)
         run: poetry run pyright
 
+      # Named separately from the suite below so a failure says "a list drifted"
+      # or "something leaks between tests" without anyone reading the log.
+      # These are the two failure classes that have actually cost us time, and
+      # both are silent: a stale list describes a system that no longer exists,
+      # and leaked state fails a test that has nothing to do with the change.
+      - name: Guards (drift, leaks, store contract)
+        run: |
+          poetry run pytest -q -m "not integration" \
+            tests/test_no_drift.py \
+            tests/test_no_leaks.py \
+            tests/test_log_once_isolation.py \
+            tests/test_vector_store_contract.py
+
       # Deliberately excludes integration tests: those download embedding and
       # reranking models, and nothing here needs an API key or network. That
       # was a design goal from the first iteration and this is where it pays
       # off -- the full suite runs on a clean runner with no credentials.
       - name: Tests
         run: poetry run pytest -q -m "not integration"
+
+      # Integration tests do not run here, which is exactly how one of them
+      # rotted: `impact_of` shipped and the stdio test went on asserting the
+      # four tools that existed before it, green the whole time. Collecting
+      # them imports every module and evaluates every decorator, so an import
+      # error, a renamed fixture or a bad signature fails here rather than
+      # weeks later on someone's laptop. It cannot catch a wrong assertion --
+      # that is what the drift guard above is for.
+      - name: Integration tests still import and collect
+        run: poetry run pytest -m integration --collect-only -q
