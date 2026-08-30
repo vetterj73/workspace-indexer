@@ -14,10 +14,13 @@ See `docs/iteration-1-plan.md` for the design and the reasoning behind it.
 ## Getting started
 
 ```bash
-poetry install
+poetry install                     # add --extras pdf to index PDFs
 cp config/workspace.example.yaml config/workspace.yaml   # what to index
 cp .env.example .env                                     # how to index
 ```
+
+`poetry install` also installs the dev group (ruff, pyright, pytest — about
+66 MB). To only *run* the indexer, `poetry install --only main` skips it.
 
 Everything runs locally with no API key if you want it to:
 

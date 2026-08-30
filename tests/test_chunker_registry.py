@@ -23,7 +23,7 @@ def test_each_kind_resolves_to_its_strategy() -> None:
         FileKind.CODE: "code",
         FileKind.MARKDOWN: "markdown",
         FileKind.TEXT: "text",
-        FileKind.PDF: "text",
+        FileKind.PDF: "pdf",
         FileKind.IMAGE: "opaque",
         FileKind.OPAQUE: "opaque",
     }
@@ -91,7 +91,7 @@ def test_versions_are_exposed_for_manifest_invalidation() -> None:
     """Bumping a chunker's version is how a strategy change forces a re-chunk
     of that kind despite unchanged content hashes."""
     versions = ChunkerRegistry("ws").versions()
-    assert set(versions) == {"code", "markdown", "text", "opaque"}
+    assert set(versions) == {"code", "markdown", "text", "opaque", "pdf"}
     assert all(v >= 1 for v in versions.values())
 
 

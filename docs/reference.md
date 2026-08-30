@@ -149,6 +149,7 @@ rules, not preferences.
 | `text.max_tokens` | `512` | |
 | `text.overlap_paragraphs` | `1` | |
 | `opaque.mode` | `metadata_only` | Binary and image files: recorded, not embedded. |
+| — | — | **PDFs have no settings of their own** and use `markdown.max_tokens`. They are prose, and a second knob would be one more thing to tune with no evidence it wants a different value. |
 | `embed_doc_type` | `false` | Also write `# type: normative` into the embedded text. **Off on measured evidence**: it dropped recall@10 from 0.875 to 0.812, and worst on the guidance cases it was meant to help. `doc_type` has nine values across thousands of chunks, so the line carries almost no discriminating signal. Changing it needs `index --force` — the header is excluded from `content_sha`, so a normal run finds identical chunk ids and re-embeds nothing. |
 | `overrides` | `{}` | Pin an extension to a chunker: `{".mdx": "markdown"}`. The extension point for a file type whose detected language routes it somewhere unhelpful. |
 
@@ -597,6 +598,40 @@ would move a swappable client-side component into the database. Worth measuring
 against the current client-side reranker before adopting, not instead of it.
 
 ---
+
+### PDFs
+
+**Needs the extra**: `poetry install --extras pdf`. Without it a PDF is recorded
+and counted but not embedded, exactly as before the feature existed — the log
+says so once per run rather than per file.
+
+One chunk per page, split further when a page is too long for the budget.
+`symbol_path` carries `page 12`, and that is the anchor to act on: there are no
+line numbers in a PDF worth returning, so `start_line`/`end_line` describe the
+extracted text and exist only to keep `location` well-formed.
+
+Headings are not inferred. A PDF's text layer has no heading structure, only
+visual size, and guessing one from font metrics is a separate project — a wrong
+heading trail is worse than none, because it reads as authoritative.
+
+**Three kinds of PDF are recorded but not indexed**, each logged distinctly
+because they call for different responses:
+
+- **no text layer** — a scan without OCR. The document is known and counted, so
+  `status` distinguishes "we have this and cannot read it" from "we never saw
+  it". Those need OCR and a fix to the walk respectively.
+- **encrypted** — ordinary to find in a workspace, and nothing can be read.
+- **damaged** — costs that one file, never the run.
+
+Extraction happens in the **reader**, not the chunker, and that is a security
+decision rather than a layering one: `read_source` is the single point where
+bytes become text, and the only place the secret scanner sees. A chunker that
+opened the file itself would be a second path to the embedding API that nothing
+scans. A PDF is exactly the kind of document people paste credentials into.
+
+Staleness re-extracts the PDF to compare, so `search.check_staleness` costs a
+pymupdf parse per PDF per search — once per file, not per hit. Turn it off if
+that bites.
 
 ## 6. Things that surprise people
 
