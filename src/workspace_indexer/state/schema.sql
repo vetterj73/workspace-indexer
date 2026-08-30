@@ -130,6 +130,11 @@ CREATE TABLE IF NOT EXISTS route_edges (
     -- matched yet or not matchable", which must stay distinguishable from "no
     -- such call" for the same reason unresolved imports do.
     resolved_path TEXT,
+    -- The target's root as well as its path. The import graph needs no such
+    -- column because it resolves inside one repository by design; a route edge
+    -- is worth having precisely because it crosses one, and `rel_path` alone
+    -- is ambiguous the moment two repositories both hold Api/HomeController.cs.
+    resolved_root TEXT,
     PRIMARY KEY (root_label, rel_path, kind, template, line),
     FOREIGN KEY (root_label, rel_path) REFERENCES files (root_label, rel_path)
         ON DELETE CASCADE

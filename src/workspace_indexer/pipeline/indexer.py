@@ -17,6 +17,7 @@ from workspace_indexer.embedding.embedding_service import EmbeddingService
 from workspace_indexer.embedding.sparse_backend import SparseBackend
 from workspace_indexer.graph import ImportEdge, ImportScanner
 from workspace_indexer.graph.import_resolver import ImportResolver
+from workspace_indexer.graph.route_resolver import RouteResolver
 from workspace_indexer.graph.route_scanner import RouteScanner
 from workspace_indexer.models import EmbeddingSpace, RunStats, SourceFile
 from workspace_indexer.obs.context import bound, file_context, new_run_id
@@ -236,6 +237,7 @@ class Indexer:
                 allow_deletes=allow_deletes,
             )
             self._resolve_imports(stats)
+            self._resolve_routes(stats)
 
     def _prepare(
         self, candidate: FileCandidate, stats: RunStats, *, force: bool
@@ -515,6 +517,46 @@ class Indexer:
             resolved=resolved,
             detail="unresolved edges are packages, tsconfig aliases or C# "
             "namespaces, which need more than the file list",
+        )
+
+    def _resolve_routes(self, stats: RunStats) -> None:
+        """Point each client call at the file declaring the endpoint it names.
+
+        After the whole walk, like imports, and for a stronger version of the
+        same reason: a call almost always names an endpoint in a *different
+        repository*, so resolving per file would depend not just on walk order
+        but on whether that repository had been walked at all.
+        """
+        pending = self._manifest.unresolved_calls()
+        if not pending:
+            return
+
+        targets = self._manifest.route_targets()
+        if not targets:
+            log.info(
+                "routes.no_targets",
+                calls=len(pending),
+                detail="client calls were found but no endpoints; the API repository "
+                "may not be in this workspace, or its language has no extractor",
+            )
+            return
+
+        resolver = RouteResolver(targets)
+        resolved = 0
+        for root_label, rel_path, template, line, exact in pending:
+            target = resolver.resolve(template, exact=exact)
+            if target is not None:
+                self._manifest.set_route_resolution(root_label, rel_path, template, line, target)
+                resolved += 1
+
+        stats.routes_resolved = resolved
+        log.info(
+            "routes.resolved",
+            attempted=len(pending),
+            resolved=resolved,
+            endpoints=len(targets),
+            detail="unresolved calls named an endpoint outside this workspace, or a "
+            "path declared in more than one file",
         )
 
     def _chunker_version(self, kind: str) -> int:

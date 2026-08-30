@@ -788,9 +788,9 @@ async def test_route_edges_are_recorded_for_both_sides(
         coverage = manifest.route_coverage()
         assert coverage["declaration"][1] >= 1
         assert coverage["call"][1] >= 1
-        # Nothing is matched yet: this rung extracts and counts, and reporting
-        # a resolution it has not done is the failure it exists to avoid.
-        assert coverage["call"][0] == 0
+        # And the call now points at the controller that declares it -- across
+        # two roots, which is the thing no import edge can do.
+        assert coverage["call"][0] >= 1
     await client.close()
 
 
@@ -809,4 +809,62 @@ async def test_an_unnamed_http_wrapper_leaves_the_call_graph_empty(
     with Manifest(tmp_path / "manifest.sqlite3") as manifest:
         await Harness(config_for(), store, manifest, tmp_path).indexer().run()
         assert manifest.route_coverage().get("call", (0, 0))[1] == 0
+    await client.close()
+
+
+async def test_a_client_call_resolves_to_a_controller_in_another_repository(
+    config_for: ConfigFactory, workspace: Path, tmp_path: Path
+) -> None:
+    """The whole point of route edges, end to end through the real pipeline.
+
+    A page in one repository and the API it calls in another share a string
+    and nothing else -- no import, no symbol, nothing a language server could
+    follow. `impact_of` on the controller has to name the caller anyway.
+    """
+    api = workspace / "repo_one" / "Api"
+    api.mkdir(parents=True, exist_ok=True)
+    (api / "RemittanceController.cs").write_text(
+        '[ApiController]\n[Route("api/[controller]")]\n'
+        "public class RemittanceController : ControllerBase\n{\n"
+        '    [HttpGet]\n    [Route("{id}")]\n'
+        "    public IActionResult Get(int id) => Ok();\n}\n",
+        encoding="utf-8",
+    )
+    (workspace / "repo_two" / "app" / "page.ts").write_text(
+        "export const load = (id: string) => customFetch(`/api/Remittance/${id}`);\n",
+        encoding="utf-8",
+    )
+
+    config = config_for(graph={"http_clients": ["fetch", "customFetch"]})
+    client = AsyncQdrantClient(path=str(tmp_path / "qdrant"))
+    store = QdrantStore(client, workspace="test", payload_indexes=False)
+    with Manifest(tmp_path / "manifest.sqlite3") as manifest:
+        stats = await Harness(config, store, manifest, tmp_path).indexer().run()
+        assert stats.routes_resolved >= 1
+
+        callers = manifest.route_callers_of("workspace", "repo_one/Api/RemittanceController.cs")
+        assert [c.rel_path for c in callers] == ["repo_two/app/page.ts"]
+        # The prefix from a template literal was enough: `/api/Remittance/`
+        # names one controller even though it cannot name one action.
+        assert callers[0].module == "/api/Remittance/"
+    await client.close()
+
+
+async def test_a_call_naming_an_endpoint_outside_the_workspace_stays_unresolved(
+    config_for: ConfigFactory, workspace: Path, tmp_path: Path
+) -> None:
+    """Half a graph honestly reported beats a whole one invented. An
+    `impact_of` naming the wrong controller is worse than one naming none."""
+    (workspace / "repo_two" / "app" / "page.ts").write_text(
+        'export const load = () => customFetch("https://stripe.example/v1/charges");\n',
+        encoding="utf-8",
+    )
+    config = config_for(graph={"http_clients": ["fetch", "customFetch"]})
+    client = AsyncQdrantClient(path=str(tmp_path / "qdrant"))
+    store = QdrantStore(client, workspace="test", payload_indexes=False)
+    with Manifest(tmp_path / "manifest.sqlite3") as manifest:
+        await Harness(config, store, manifest, tmp_path).indexer().run()
+        resolved, total = manifest.route_coverage().get("call", (0, 0))
+        assert total >= 1
+        assert resolved == 0
     await client.close()

@@ -330,6 +330,18 @@ manifest alone: no embedding call, no vector search.
 | `rel_path` | string | required | A path from a search result, or a trailing portion of one. |
 | `limit` | integer 1–200 | `25` | Maximum edges **per direction**. |
 
+`called_by` and `calls` are the HTTP half: files that reach this one over a
+URL rather than by importing it, and the endpoints this one calls. They are
+kept apart from `used_by`/`depends_on` deliberately — **an importer breaks at
+compile time, an HTTP caller breaks at run time, in another repository, and no
+compiler will warn you.** Merging them would hide the distinction that makes
+the question worth asking.
+
+This is the only edge in the system that crosses repositories, and it is the
+reason one shared collection is worth its costs. A React page and the C#
+controller it calls share a *string*, not a symbol — there is no import for a
+language server to follow.
+
 `used_by` is the half that is expensive to get any other way — it spans every
 repository in the workspace — and each entry is anchored as `path:line` at the
 import statement. `used_by_by_type` counts every dependent by document type
@@ -360,6 +372,29 @@ nothing to do with the file:
 `workspace-indexer://taxonomy` serves the same taxonomy as JSON. Both surfaces
 exist because clients differ in how reliably a model sees a resource the user
 has not attached, whereas a tool is always in context.
+
+### Route graph
+
+Client call sites matched to the endpoints they reach. `status` reports the
+counts; `impact_of` reports the edges.
+
+Resolution is to a **file**, not to an endpoint, and that is what makes the
+prefix-only calls usable. `` fetch(`/api/remit/${id}`) `` cannot say which
+action of a controller it calls, but every candidate is in the same file — and
+"which file" is the question `impact_of` asks. A prefix reaching two *files*
+stays unresolved rather than picking one.
+
+Matching ignores case, query strings and the scheme/host of an absolute URL.
+Route parameters (`{id}`, `{id:int}`) match any one segment and `{*rest}`
+absorbs the remainder. A prefix must be strictly shorter than the route it
+matches, because the interpolation it came from has to go somewhere.
+
+**Unresolved is a real answer**, as it is for imports: the endpoint may live
+outside this workspace, or the path may be declared in more than one file.
+Neither means nothing calls it.
+
+The one setting that decides whether any of this works is
+`graph.http_clients` — see §2.4.
 
 ### Import graph
 

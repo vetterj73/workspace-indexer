@@ -25,6 +25,19 @@ class ImpactReport(BaseModel):
     used_by: list[Dependent] = []
     used_by_total: int = 0
 
+    # Files that reach this one over HTTP, and endpoints this one calls.
+    #
+    # Kept apart from `used_by`/`depends_on` rather than merged into them,
+    # because the relationship is different in a way that changes what an agent
+    # should do. An importer breaks at compile time; a caller over HTTP breaks
+    # at run time, in another repository, possibly deployed separately. Merging
+    # them would hide exactly the distinction that makes the question worth
+    # asking.
+    called_by: list[Dependent] = []
+    calls: list[Dependency] = []
+    called_by_total: int = 0
+    calls_total: int = 0
+
     # Every dependent counted by doc_type, over the whole result rather than
     # the page that fitted. This is the line an agent can act on without
     # reading the list: `{"test": 3, "implementation": 1}` means changing this
