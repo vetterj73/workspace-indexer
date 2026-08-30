@@ -9,6 +9,7 @@ from workspace_indexer.chunking.chunker import Chunker
 from workspace_indexer.chunking.code_chunker import CodeChunker
 from workspace_indexer.chunking.markdown_chunker import MarkdownChunker
 from workspace_indexer.chunking.opaque_chunker import OpaqueChunker
+from workspace_indexer.chunking.pdf_chunker import PdfChunker
 from workspace_indexer.chunking.text_chunker import TextChunker
 from workspace_indexer.config import ChunkingSection
 from workspace_indexer.models import Chunk, FileKind, SourceFile
@@ -20,8 +21,9 @@ log = get_logger("workspace_indexer.chunking.registry")
 class ChunkerRegistry:
     """FileKind -> Chunker, with per-extension overrides from config.
 
-    The registry is the extension point: adding PDF support later is one entry
-    here plus one new class, with nothing else touched.
+    The registry is the extension point. PDF support was exactly that: one
+    entry here plus one new class, plus the extraction the reader had to do
+    before the scanner could see the text.
     """
 
     def __init__(self, workspace: str) -> None:
@@ -31,15 +33,16 @@ class ChunkerRegistry:
             "markdown": MarkdownChunker(workspace),
             "text": text,
             "opaque": OpaqueChunker(workspace),
+            "pdf": PdfChunker(workspace),
         }
         self._by_kind: dict[FileKind, Chunker] = {
             FileKind.CODE: self._by_name["code"],
             FileKind.MARKDOWN: self._by_name["markdown"],
             FileKind.TEXT: text,
-            # PDF has no chunker yet; prose packing over extracted text is the
-            # honest interim behaviour, and it is never reached today because
-            # discovery has no PDF reader.
-            FileKind.PDF: text,
+            # A PDF only reaches this chunker when read_source extracted a
+            # text layer; without one it was downgraded to OPAQUE and never
+            # arrives here.
+            FileKind.PDF: self._by_name["pdf"],
             FileKind.IMAGE: self._by_name["opaque"],
             FileKind.OPAQUE: self._by_name["opaque"],
         }

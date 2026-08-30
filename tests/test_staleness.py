@@ -9,13 +9,18 @@ from pathlib import Path
 
 import pytest
 
-from workspace_indexer.models import SearchHit
+from workspace_indexer.models import FileKind, SearchHit
 from workspace_indexer.search.staleness import mark_stale
 
 BODY = "def login():\n    return check_token()"
 
 
-def _hit(path: Path, source_text: str = BODY, chunk_id: str = "id-1") -> SearchHit:
+def _hit(
+    path: Path,
+    source_text: str = BODY,
+    chunk_id: str = "id-1",
+    kind: FileKind = FileKind.CODE,
+) -> SearchHit:
     return SearchHit(
         chunk_id=chunk_id,
         score=1.0,
@@ -24,6 +29,7 @@ def _hit(path: Path, source_text: str = BODY, chunk_id: str = "id-1") -> SearchH
         root_label="root",
         source_text=source_text,
         content_sha="sha",
+        kind=kind,
     )
 
 
@@ -83,3 +89,41 @@ def test_one_read_per_file_not_per_hit(tmp_path: Path, monkeypatch: pytest.Monke
 
 def test_empty_input(tmp_path: Path) -> None:
     assert mark_stale([]) == []
+
+
+def test_a_pdf_hit_is_not_stale_when_the_document_is_unchanged(tmp_path: Path) -> None:
+    """The bug this guards: `_read` decoded raw bytes as UTF-8, so a PDF came
+    back as replacement characters and *every* hit was flagged stale.
+
+    Wrong in the direction that trains an agent to ignore the flag -- and the
+    flag is what stops it editing from text that no longer exists.
+    """
+    pymupdf = pytest.importorskip("pymupdf", reason="needs `poetry install --extras pdf`")
+    path = tmp_path / "doc.pdf"
+    document = pymupdf.open()
+    page = document.new_page()
+    page.insert_textbox(
+        pymupdf.Rect(36, 36, 560, 780),
+        "Rolling back a release requires the rollback script and the previous tag.",
+        fontsize=9,
+    )
+    document.save(path)
+    document.close()
+
+    hit = _hit(path, "Rolling back a release requires the rollback script", kind=FileKind.PDF)
+    assert mark_stale([hit])[0].stale is False
+
+
+def test_a_pdf_hit_is_stale_once_its_own_text_changes(tmp_path: Path) -> None:
+    pymupdf = pytest.importorskip("pymupdf", reason="needs `poetry install --extras pdf`")
+    path = tmp_path / "doc.pdf"
+    document = pymupdf.open()
+    page = document.new_page()
+    page.insert_textbox(
+        pymupdf.Rect(36, 36, 560, 780), "This section has been rewritten entirely.", fontsize=9
+    )
+    document.save(path)
+    document.close()
+
+    hit = _hit(path, "Rolling back a release requires the rollback script", kind=FileKind.PDF)
+    assert mark_stale([hit])[0].stale is True

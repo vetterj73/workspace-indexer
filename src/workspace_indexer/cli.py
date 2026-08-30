@@ -266,13 +266,30 @@ def explain(
                 f"\n[cyan]{meta.start_line}-{meta.end_line}[/cyan]"
                 f" · {meta.chunk_index + 1}/{meta.chunk_total}"
                 f" · ~{meta.token_estimate} tokens"
-                f" · [dim]{meta.symbol_kind or '-'} {meta.symbol_path or ''}[/dim]"
+                f" · [dim]{symbol_label(meta.symbol_kind, meta.symbol_path)}[/dim]"
                 + (" [yellow](degraded parse)[/yellow]" if meta.parse_degraded else "")
             )
             for line in chunk.source_text.splitlines()[:12]:
                 console.print(f"    {line}")
     finally:
         ctx.manifest.close()
+
+
+def symbol_label(kind: str | None, path: str | None) -> str:
+    """`kind path`, unless the path already begins with the kind.
+
+    Public so a test can assert it directly: it is pure string formatting, and
+    exercising it through the whole CLI would need an index behind it.
+
+    A PDF chunk is kind "page" with path "page 3", which rendered as
+    "page page 3". Harmless, and the sort of thing that makes output look
+    careless enough to distrust the numbers beside it.
+    """
+    kind = kind or "-"
+    path = path or ""
+    if path.startswith(kind):
+        return path
+    return f"{kind} {path}".rstrip()
 
 
 @app.command()

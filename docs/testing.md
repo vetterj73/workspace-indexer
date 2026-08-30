@@ -212,6 +212,12 @@ the first attempt and had to be rewritten — the `log_once` pair (a local
 fixture was hiding the leak) and the reference-doc guard (a passing mention of
 a tool name satisfied it, so it now requires a real entry).
 
+**PDF fixtures must assert they fit.** `page.insert_textbox` returns the space
+left over and writes *nothing* when the text overflows, so an oversized fixture
+produces an empty PDF and a later assertion that fails for a reason unrelated to
+the code. `write_pdf` in `test_pdf_chunker.py` raises instead. It caught two
+tests on their first run.
+
 **A wrong fixture looks like a failing feature.** The mirror tests asserted
 `[2,0,0,0]` was nearer than `[1,0,0,0]`; the collection is cosine, which
 ignores magnitude, so those are the same vector. The fixture was wrong, not the

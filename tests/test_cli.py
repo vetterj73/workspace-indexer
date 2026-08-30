@@ -199,3 +199,15 @@ def test_watch_without_the_extra_says_which_extra(monkeypatch: pytest.MonkeyPatc
 
     assert result.exit_code == 2
     assert "watch" in result.output
+
+
+def test_asymbol_label_does_not_repeat_the_kind() -> None:
+    """A PDF chunk is kind "page" with path "page 3", which rendered as
+    "page page 3" -- careless enough to make a reader distrust the numbers
+    printed beside it."""
+    from workspace_indexer.cli import symbol_label
+
+    assert symbol_label("page", "page 3") == "page 3"
+    assert symbol_label("heading", "Setup > WSL") == "heading Setup > WSL"
+    assert symbol_label(None, None) == "-"
+    assert symbol_label("function", None) == "function"

@@ -15,6 +15,7 @@ from collections.abc import Sequence
 from fnmatch import fnmatch
 
 from workspace_indexer.discovery.file_candidate import FileCandidate
+from workspace_indexer.discovery.pdf_text import extract_pages
 from workspace_indexer.models import FileKind, SourceFile, sha256_text
 from workspace_indexer.obs.logging import get_logger
 from workspace_indexer.secrets import SecretWithheldError, scan
@@ -30,8 +31,10 @@ def _allowed(rel_path: str, patterns: Sequence[str] | None) -> bool:
     return any(fnmatch(probe, p) or fnmatch(rel_path, p) for p in patterns)
 
 
-# Kinds we never decode: reading them as text is meaningless and, for a large
-# binary, wasteful.
+# Kinds we never decode as UTF-8: reading them as text is meaningless and, for
+# a large binary, wasteful. PDFs are binary too, but they carry a text layer
+# that `extract_pages` can reach, so they are handled separately below rather
+# than written off here.
 _NEVER_TEXT = frozenset({FileKind.IMAGE, FileKind.OPAQUE, FileKind.PDF})
 
 # A NUL byte in the first block is the same heuristic `git diff` uses to call a
@@ -52,6 +55,21 @@ def read_source(
 
     kind = candidate.kind
     text: str | None = None
+    pages: list[str] = []
+
+    if kind is FileKind.PDF:
+        # Extracted here, not in the chunker, so the secret scan below sees the
+        # whole document. A chunker that opened the file for itself would be a
+        # second path to the embedding API that the scanner never inspects.
+        extracted = extract_pages(candidate.abs_path)
+        if extracted is None:
+            # No extra installed, unreadable, encrypted, or no text layer --
+            # each logged distinctly by extract_pages. Recorded as opaque so it
+            # is known and counted rather than mysteriously absent.
+            kind = FileKind.OPAQUE
+        else:
+            pages = extracted
+            text = "\n\n".join(pages)
 
     if kind not in _NEVER_TEXT:
         if b"\x00" in raw[:_SNIFF_BYTES]:
@@ -93,4 +111,5 @@ def read_source(
         sha256=sha256_text(raw.decode("utf-8", "surrogateescape")),
         repo=candidate.repo,
         text=text,
+        pages=pages,
     )

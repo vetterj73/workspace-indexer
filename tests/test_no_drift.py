@@ -157,3 +157,19 @@ def test_both_factories_agree_on_what_database_reranking_means() -> None:
     from workspace_indexer.storage.store_factory import DATABASE_PROVIDERS as store_side
 
     assert rerank_side == store_side
+
+
+def test_ci_installs_every_extra_so_optional_tests_actually_run() -> None:
+    """Tests behind an optional dependency skip silently without it.
+
+    `test_pdf_chunker.py` calls `importorskip("pymupdf")`, which is the right
+    behaviour for a contributor who did not install the extra and the wrong
+    outcome entirely in CI: a green run that skipped the whole feature looks
+    identical to one that verified it. Same shape as the integration tests that
+    rotted unnoticed.
+    """
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert "--all-extras" in workflow, (
+        "CI must install every extra, or tests guarded by importorskip are "
+        "skipped without anything saying so"
+    )
