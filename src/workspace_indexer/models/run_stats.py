@@ -31,6 +31,10 @@ class RunStats(BaseModel):
     # package, a tsconfig alias and a C# namespace all need more than the
     # file list, and stay unresolved rather than being guessed at.
     imports_resolved: int = 0
+    # Files this run would have removed from the index but did not, because
+    # the deletion looked more like a bad checkout than a real removal.
+    # Counted rather than logged alone: a warning in CI output is not a brake.
+    deletions_withheld: int = 0
     errors: int = 0
     config_hash: str = ""
     skip_reasons: dict[str, int] = Field(default_factory=dict)

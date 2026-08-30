@@ -42,13 +42,25 @@ class Walker:
         # here can stand for thousands of files, so folding it into `skips`
         # would make the file tally meaningless.
         self.pruned_dirs: Counter[str] = Counter()
+        # Roots configured but not present on disk. Recorded rather than only
+        # logged because a caller has to be able to act on it: a root we could
+        # not read is not a root that turned out to be empty, and only one of
+        # those two justifies deleting its index.
+        self.unobservable_roots: set[str] = set()
 
     def walk(self, only_root: str | None = None) -> Iterator[FileCandidate]:
         for root in self._config.workspace.roots:
             if only_root and root.resolved_label != only_root:
                 continue
             if not root.path.is_dir():
-                log.warning("root.missing", path=str(root.path), label=root.resolved_label)
+                self.unobservable_roots.add(root.resolved_label)
+                log.warning(
+                    "root.missing",
+                    path=str(root.path),
+                    label=root.resolved_label,
+                    detail="its indexed files are left alone; a root that cannot be read "
+                    "has not been shown to be empty",
+                )
                 continue
             yield from self._walk_root(root)
 

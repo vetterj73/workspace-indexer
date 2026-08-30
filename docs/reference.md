@@ -26,6 +26,25 @@ Walk the configured roots and index what changed.
 | `--dry-run` | off | Chunk plan and token estimate, no API calls and nothing stored. How to tune chunking without paying to iterate. |
 | `--force` | off | Ignore the mtime and hash shortcuts and re-embed everything. Needed after changing anything that alters *what is embedded* without altering chunk identity — `chunking.embed_doc_type` is the example. |
 
+
+**Deleting from an absence.** Files gone from disk are removed from the index.
+That decision is made from an *absence*, which is also what a partial checkout,
+an unmounted volume and a failed clone produce. Two brakes:
+
+- **A root that is not on disk is never pruned.** It has not been shown to be
+  empty; it has not been read. No override, because there is no evidence to
+  weigh. The run reports the count and exits **3**.
+- **Losing more than half of a root at once** (and at least 10 files) stops and
+  says so rather than proceeding. `--allow-deletes` is how you say the files
+  really are gone — a repository restructure legitimately trips this.
+
+This matters most with **one collection spanning several repositories**, which
+is the arrangement that makes a cross-repo search work at all. A CI job checks
+out one repo while `workspace.yaml` still declares all of them, so an unscoped
+run sees several repositories' worth of absence. Pass `--root <label>` in CI so
+the run only judges what it can see; the brakes are what catch it when nobody
+did.
+
 ### `search`
 
 | flag | default | |

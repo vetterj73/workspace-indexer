@@ -62,13 +62,28 @@ def index(
         bool, typer.Option("--dry-run", help="Show the chunk plan and token estimate, no API calls")
     ] = False,
     force: Annotated[bool, typer.Option("--force", help="Ignore mtime and hash shortcuts")] = False,
+    allow_deletes: Annotated[
+        bool,
+        typer.Option(
+            "--allow-deletes",
+            help="Remove a root's index even when most of it disappeared at once",
+        ),
+    ] = False,
 ) -> None:
-    """Index the configured roots, reusing everything unchanged."""
+    """Index the configured roots, reusing everything unchanged.
+
+    Files gone from disk are removed from the index. That decision is made from
+    an absence, which is also what a partial checkout looks like -- so a run
+    that would remove most of a root at once stops and says so instead.
+    `--allow-deletes` is how you say the files really are gone.
+    """
 
     async def run() -> None:
         ctx = _context(config)
         try:
-            stats = await ctx.indexer().run(only_root=root, force=force, dry_run=dry_run)
+            stats = await ctx.indexer().run(
+                only_root=root, force=force, dry_run=dry_run, allow_deletes=allow_deletes
+            )
         finally:
             await ctx.close()
 
@@ -80,11 +95,23 @@ def index(
         table.add_row("chunks removed", str(stats.chunks_deleted))
         table.add_row("tokens", f"{stats.tokens_embedded:,}")
         table.add_row("estimated cost", _cost_cell(stats))
+        if stats.deletions_withheld:
+            table.add_row("[yellow]deletions withheld[/yellow]", str(stats.deletions_withheld))
         if stats.errors:
             table.add_row("[red]errors[/red]", str(stats.errors))
         console.print(table)
         if stats.mode == "dry-run":
             console.print("[dim]No API calls were made and nothing was stored.[/dim]")
+        if stats.deletions_withheld:
+            # Non-zero, because the index is now knowingly out of step with
+            # disk and a warning in CI output is not a brake. The embeddings
+            # this run paid for are already stored; only the pruning stopped.
+            console.print(
+                f"[yellow]{stats.deletions_withheld} file(s) were left in the index "
+                "although they are not on disk.[/yellow] Either the checkout is "
+                "incomplete, or they really are gone and this wants --allow-deletes."
+            )
+            raise typer.Exit(code=3)
 
     asyncio.run(run())
 
