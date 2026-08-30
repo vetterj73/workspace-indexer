@@ -77,7 +77,14 @@ def read_source(
             kind = FileKind.OPAQUE
         else:
             try:
-                text = raw.decode("utf-8")
+                # utf-8-sig, not utf-8: it strips a leading byte-order mark and
+                # is otherwise identical. Visual Studio writes one on almost
+                # everything -- 376 of 479 .cs files in one real workspace --
+                # and a stray U+FEFF is not whitespace to a regex, so every
+                # line-anchored pattern silently fails on the first line. That
+                # cost the Razor route scanner three quarters of its matches
+                # before anyone noticed the character was there.
+                text = raw.decode("utf-8-sig")
             except UnicodeDecodeError as exc:
                 log.debug("read.binary_downgrade", reason="undecodable", error=str(exc.reason))
                 kind = FileKind.OPAQUE

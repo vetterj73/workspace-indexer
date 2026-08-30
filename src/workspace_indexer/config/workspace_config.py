@@ -9,6 +9,7 @@ from pydantic import Field
 from workspace_indexer.config.chunking_section import ChunkingSection
 from workspace_indexer.config.eval_section import EvalSection
 from workspace_indexer.config.excludes import HARDCODED_EXCLUDES
+from workspace_indexer.config.graph_section import GraphSection
 from workspace_indexer.config.index_section import IndexSection
 from workspace_indexer.config.logging_config import LoggingConfig
 from workspace_indexer.config.root_config import RootConfig
@@ -24,6 +25,7 @@ class WorkspaceConfig(Strict):
     chunking: ChunkingSection = Field(default_factory=ChunkingSection)
     search: SearchSection = Field(default_factory=SearchSection)
     watch: WatchSection = Field(default_factory=WatchSection)
+    graph: GraphSection = Field(default_factory=GraphSection)
     eval: EvalSection = Field(default_factory=EvalSection)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
 

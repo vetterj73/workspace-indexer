@@ -172,7 +172,27 @@ rules, not preferences.
 | `embed_doc_type` | `false` | Also write `# type: normative` into the embedded text. **Off on measured evidence**: it dropped recall@10 from 0.875 to 0.812, and worst on the guidance cases it was meant to help. `doc_type` has nine values across thousands of chunks, so the line carries almost no discriminating signal. Changing it needs `index --force` — the header is excluded from `content_sha`, so a normal run finds identical chunk ids and re-embeds nothing. |
 | `overrides` | `{}` | Pin an extension to a chunker: `{".mdx": "markdown"}`. The extension point for a file type whose detected language routes it somewhere unhelpful. |
 
-### 2.4 `search`
+### 2.4 `graph`
+
+| key | default | |
+|---|---|---|
+| `http_clients` | `[fetch, axios, ky, superagent]` | Functions that make an HTTP request. **Name whatever your codebase wraps `fetch` in.** A bare name matches `name(...)`; an object name matches its request methods, so `axios` covers `axios.get`. |
+| `razor_pages_dir` | `Pages` | Directory whose contents map to routes by file path. |
+
+`http_clients` is the setting that decides whether the route graph sees
+anything. Measured on a real React workspace: the default list found **6** call
+sites, and adding the project's own wrapper found **71**. A codebase that wraps
+`fetch` and does not say so here gets a route graph showing endpoints and no
+callers — which reads as "nothing calls this API".
+
+`status` reports that shape explicitly when it sees it.
+
+Razor Pages routes come from file location, not the directive: measured on the
+same workspace, **all twenty** `@page` directives were bare. An explicit
+`@page "/template"` still wins where one exists, and a `.cshtml` with no `@page`
+at all is a layout or partial and declares nothing.
+
+### 2.5 `search`
 
 | key | default | |
 |---|---|---|
@@ -188,7 +208,7 @@ rules, not preferences.
 | `rerank.instruction` | none | Prepended to the query — the API has no instruction parameter. |
 | `rerank.on_error` | `degrade` | `degrade` falls back to fusion order and logs; `fail` raises, which the eval harness wants so a silent degradation cannot corrupt a measurement. |
 
-### 2.5 `watch`
+### 2.6 `watch`
 
 | key | default | |
 |---|---|---|
@@ -197,7 +217,7 @@ rules, not preferences.
 | `poll_interval_ms` | `5000` | For roots that cannot use inotify. |
 | `reload_config` | `true` | Reload this file on change. Settings and ignore rules go live; **a newly added root still needs a restart**. |
 
-### 2.6 `eval` and `logging`
+### 2.7 `eval` and `logging`
 
 | key | default | |
 |---|---|---|

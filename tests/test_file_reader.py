@@ -203,3 +203,21 @@ def test_the_error_carries_findings_but_never_the_value(tmp_path: Path) -> None:
     assert caught.value.findings
     assert key not in str(caught.value)
     assert key not in " ".join(str(f) for f in caught.value.findings)
+
+
+def test_a_byte_order_mark_is_not_part_of_the_text(tmp_path: Path) -> None:
+    """Visual Studio writes one on almost everything -- 376 of 479 .cs files in
+    one real workspace -- and U+FEFF is not whitespace to a regex, so every
+    line-anchored pattern fails silently on the first line.
+
+    Left in, it is also embedded and displayed as an invisible first character
+    of the file's first chunk.
+    """
+    path = tmp_path / "widget.cs"
+    path.write_bytes(b"\xef\xbb\xbf@page\nusing System;\n")
+
+    source = read_source(_candidate(path, FileKind.CODE, "csharp"))
+
+    assert source is not None and source.text is not None
+    assert source.text.startswith("@page"), "the BOM survived into the indexed text"
+    assert "﻿" not in source.text

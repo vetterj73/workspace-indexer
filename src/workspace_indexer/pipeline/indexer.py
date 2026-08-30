@@ -17,6 +17,7 @@ from workspace_indexer.embedding.embedding_service import EmbeddingService
 from workspace_indexer.embedding.sparse_backend import SparseBackend
 from workspace_indexer.graph import ImportEdge, ImportScanner
 from workspace_indexer.graph.import_resolver import ImportResolver
+from workspace_indexer.graph.route_scanner import RouteScanner
 from workspace_indexer.models import EmbeddingSpace, RunStats, SourceFile
 from workspace_indexer.obs.context import bound, file_context, new_run_id
 from workspace_indexer.obs.logging import get_logger
@@ -69,6 +70,13 @@ class Indexer:
         self._classifier = classifier
         self._flush_chunks = max(1, flush_chunks)
         self._imports = ImportScanner()
+        # Client function names come from config: measured on a real workspace,
+        # a project wrapper was called 66 times against `fetch`'s 27, so a
+        # fixed list would report a tenth of the call sites as full coverage.
+        self._routes = RouteScanner(
+            http_clients=config.graph.http_clients,
+            razor_pages_dir=config.graph.razor_pages_dir,
+        )
 
     async def run(
         self,
@@ -311,6 +319,10 @@ class Indexer:
             delta=delta,
             classification=classification,
             imports=self._imports.scan(source.text or "", source.language or ""),
+            routes=self._routes.declarations(
+                source.text or "", source.language or "", source.rel_path
+            ),
+            calls=self._routes.calls(source.text or "", source.language or ""),
         )
 
     def _classify(self, source: SourceFile) -> Classification:
@@ -375,6 +387,7 @@ class Indexer:
         self._manifest.forget_chunks(file.delta.to_delete, self._space.slug())
         self._manifest.record_chunks(file.chunks, self._space.slug())
         self._manifest.record_imports(source.root_label, source.rel_path, file.imports)
+        self._manifest.record_routes(source.root_label, source.rel_path, file.routes, file.calls)
         self._manifest.record_space(
             source.root_label, source.rel_path, self._space.slug(), len(file.chunks)
         )

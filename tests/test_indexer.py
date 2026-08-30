@@ -759,3 +759,54 @@ async def test_an_ordinary_deletion_is_not_second_guessed(
         assert stats.deletions_withheld == 0
         assert stats.chunks_deleted > 0
     await client.close()
+
+
+async def test_route_edges_are_recorded_for_both_sides(
+    config_for: ConfigFactory, workspace: Path, tmp_path: Path
+) -> None:
+    """Through the real pipeline, not the scanner alone: the edges have to
+    survive the walk, the reader and the manifest to be worth anything."""
+    api = workspace / "repo_one" / "Api"
+    api.mkdir(parents=True, exist_ok=True)
+    (api / "RemittanceController.cs").write_text(
+        '[ApiController]\n[Route("api/[controller]")]\n'
+        "public class RemittanceController : ControllerBase\n{\n"
+        '    [HttpGet]\n    [Route("{id}")]\n'
+        "    public IActionResult Get(int id) => Ok();\n}\n",
+        encoding="utf-8",
+    )
+    (workspace / "repo_two" / "app" / "page.ts").write_text(
+        'export const load = () => customFetch("/api/Remittance/1");\n', encoding="utf-8"
+    )
+
+    config = config_for(graph={"http_clients": ["fetch", "customFetch"]})
+    client = AsyncQdrantClient(path=str(tmp_path / "qdrant"))
+    store = QdrantStore(client, workspace="test", payload_indexes=False)
+    with Manifest(tmp_path / "manifest.sqlite3") as manifest:
+        await Harness(config, store, manifest, tmp_path).indexer().run()
+
+        coverage = manifest.route_coverage()
+        assert coverage["declaration"][1] >= 1
+        assert coverage["call"][1] >= 1
+        # Nothing is matched yet: this rung extracts and counts, and reporting
+        # a resolution it has not done is the failure it exists to avoid.
+        assert coverage["call"][0] == 0
+    await client.close()
+
+
+async def test_an_unnamed_http_wrapper_leaves_the_call_graph_empty(
+    config_for: ConfigFactory, workspace: Path, tmp_path: Path
+) -> None:
+    """The finding that makes `graph.http_clients` a feature rather than a
+    nicety: on a real workspace, naming the wrapper took call sites from 6 to
+    71. Left unnamed, `status` shows endpoints and no callers -- which reads
+    as "nothing calls this API"."""
+    (workspace / "repo_two" / "app" / "page.ts").write_text(
+        'export const load = () => customFetch("/api/Remittance/1");\n', encoding="utf-8"
+    )
+    client = AsyncQdrantClient(path=str(tmp_path / "qdrant"))
+    store = QdrantStore(client, workspace="test", payload_indexes=False)
+    with Manifest(tmp_path / "manifest.sqlite3") as manifest:
+        await Harness(config_for(), store, manifest, tmp_path).indexer().run()
+        assert manifest.route_coverage().get("call", (0, 0))[1] == 0
+    await client.close()

@@ -104,6 +104,17 @@ search:
       Prioritize implementation code over tests, fixtures, and generated files.
     on_error: degrade    # degrade | fail
 
+graph:
+  # Functions that make an HTTP request, so a client call site can be matched
+  # to the endpoint it calls. Name whatever your codebase wraps fetch in --
+  # measured on a real React workspace, naming the project's own wrapper took
+  # call sites found from 6 to 71. An object name (axios) covers its request
+  # methods (axios.get, axios.post).
+  http_clients: [fetch, axios, ky, superagent]
+  # Directory whose contents map to routes by file path. Razor Pages usually
+  # declares `@page` with no template and derives the URL from location.
+  razor_pages_dir: Pages
+
 eval:
   dataset: ./config/eval.yaml
   metrics: [recall@10, mrr@10]
