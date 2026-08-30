@@ -13,6 +13,7 @@ from workspace_indexer.config.config_error import ConfigError
 from workspace_indexer.config.eval_section import EvalSection
 from workspace_indexer.config.excludes import HARDCODED_EXCLUDES
 from workspace_indexer.config.file_log_config import FileLogConfig
+from workspace_indexer.config.graph_section import DEFAULT_HTTP_CLIENTS, GraphSection
 from workspace_indexer.config.index_section import IndexSection
 from workspace_indexer.config.loader import DEFAULT_CONFIG_PATH, load_workspace_config
 from workspace_indexer.config.logfire_config import LogfireConfig
@@ -36,7 +37,9 @@ __all__ = [
     "ChunkingSection",
     "CodeChunking",
     "ConfigError",
+    "DEFAULT_HTTP_CLIENTS",
     "EvalSection",
+    "GraphSection",
     "FileLogConfig",
     "IndexSection",
     "LogfireConfig",

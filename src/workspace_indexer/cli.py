@@ -241,6 +241,7 @@ def status(config: ConfigOption = None) -> None:
             console.print(runs)
             _print_spend(ctx)
             _print_import_coverage(ctx)
+            _print_route_coverage(ctx)
             _print_tool_calls(ctx)
         finally:
             await ctx.close()
@@ -699,6 +700,46 @@ def _print_tool_calls(ctx: AppContext) -> None:
         for call in unanswered:
             reason = "nothing found" if not call.returned else f"{call.dropped_for_budget} dropped"
             console.print(f"[dim]  {call.tool}: {call.query[:60]!r} — {reason}[/dim]")
+
+
+def _print_route_coverage(ctx: AppContext) -> None:
+    """What the route graph found, and how precisely it could find it.
+
+    Three numbers rather than one, because they fail independently. A workspace
+    with declarations and no calls has an HTTP client this does not recognise --
+    `graph.http_clients` is the fix, and measured on a real React workspace
+    naming its wrapper took call sites from 6 to 71. A workspace with calls and
+    no declarations is missing a server-side extractor. And a low exact share
+    caps how precise any matching can ever be, whatever the resolver does.
+    """
+    coverage = ctx.manifest.route_coverage()
+    if not coverage:
+        return
+
+    declarations = coverage.get("declaration", (0, 0))[1]
+    resolved, calls = coverage.get("call", (0, 0))
+    exact, total = ctx.manifest.route_precision()
+
+    table = Table(title="route graph")
+    for column in ("", "count"):
+        table.add_column(column)
+    table.add_row("endpoints declared", f"{declarations:,}")
+    table.add_row("client call sites", f"{calls:,}")
+    table.add_row("…with the whole URL", f"{exact:,}" + (f" of {total:,}" if total else ""))
+    table.add_row("…matched to an endpoint", f"{resolved:,}")
+    console.print(table)
+
+    if declarations and not calls:
+        console.print(
+            "[yellow]Endpoints were found but no call sites.[/yellow] If this workspace "
+            "wraps fetch, name the wrapper in `graph.http_clients` — otherwise every "
+            "call through it is invisible."
+        )
+    if calls and not resolved:
+        console.print(
+            "[dim]No call has been matched to an endpoint yet: matching is not built "
+            "(see #53). These are extracted and counted, nothing more.[/dim]"
+        )
 
 
 def _print_import_coverage(ctx: AppContext) -> None:

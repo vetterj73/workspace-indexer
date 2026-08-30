@@ -100,6 +100,45 @@ CREATE INDEX IF NOT EXISTS imports_by_module ON imports (module);
 -- executescript runs before the migration, so on a database predating that
 -- column this statement would fail and take the whole open with it.
 
+-- Endpoints a file exposes, and endpoints a file calls.
+--
+-- One table for both sides because they are two halves of one question and a
+-- join across two tables would be the only way to ask it. `kind` says which:
+-- `declaration` is a thing that can be pointed at, `call` is a pointer.
+--
+-- Separate from `imports` because the resolution rules are opposite. An import
+-- resolves within its own repository, deliberately; a route edge is worth
+-- having precisely because it crosses one. Sharing a table would mean one
+-- column meaning two different things depending on a neighbouring column,
+-- which is how a query comes to be quietly wrong.
+CREATE TABLE IF NOT EXISTS route_edges (
+    root_label  TEXT    NOT NULL,
+    rel_path    TEXT    NOT NULL,
+    kind        TEXT    NOT NULL,
+    -- The route template for a declaration, the called URL for a call. Stored
+    -- as written; normalisation is a matching decision and belongs to whatever
+    -- does the matching, not to the record of what the code says.
+    template    TEXT    NOT NULL,
+    method      TEXT,
+    line        INTEGER NOT NULL,
+    -- 0 when only the static prefix of the URL was recoverable, because the
+    -- rest was interpolated. A prefix names an endpoint but cannot tell two
+    -- routes sharing it apart, and a resolver that forgot this would report a
+    -- precision it does not have.
+    exact       INTEGER NOT NULL DEFAULT 1,
+    -- The declaring file this call reaches, once matched. NULL means "not
+    -- matched yet or not matchable", which must stay distinguishable from "no
+    -- such call" for the same reason unresolved imports do.
+    resolved_path TEXT,
+    PRIMARY KEY (root_label, rel_path, kind, template, line),
+    FOREIGN KEY (root_label, rel_path) REFERENCES files (root_label, rel_path)
+        ON DELETE CASCADE
+);
+
+-- The reverse edge is the whole point here too: "who calls this endpoint".
+CREATE INDEX IF NOT EXISTS route_edges_by_template ON route_edges (template);
+CREATE INDEX IF NOT EXISTS route_edges_by_target ON route_edges (resolved_path);
+
 -- What an agent asked through the MCP tools, and what it got back.
 --
 -- Here rather than only in the log because the useful question is relational:

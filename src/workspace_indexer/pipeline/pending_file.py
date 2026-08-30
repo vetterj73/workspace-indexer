@@ -6,6 +6,8 @@ from pydantic import BaseModel
 
 from workspace_indexer.classification import Classification
 from workspace_indexer.graph.import_edge import ImportEdge
+from workspace_indexer.graph.route_call import RouteCall
+from workspace_indexer.graph.route_declaration import RouteDeclaration
 from workspace_indexer.models import Chunk, SourceFile
 from workspace_indexer.state import ChunkDelta
 
@@ -23,6 +25,8 @@ class PendingFile(BaseModel):
     chunker_version: int
     chunks: list[Chunk]
     delta: ChunkDelta
+    routes: list[RouteDeclaration] = []
+    calls: list[RouteCall] = []
     classification: Classification | None = None
     # Extracted with the chunks so the file is parsed once per run, and
     # written in the same transaction so the graph cannot survive a file

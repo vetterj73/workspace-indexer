@@ -24,6 +24,8 @@ from workspace_indexer.discovery.file_candidate import FileCandidate
 from workspace_indexer.graph.dependency import Dependency
 from workspace_indexer.graph.dependent import Dependent
 from workspace_indexer.graph.import_edge import ImportEdge
+from workspace_indexer.graph.route_call import RouteCall
+from workspace_indexer.graph.route_declaration import RouteDeclaration
 from workspace_indexer.models import Chunk, DocumentType, RunStats, SourceFile, ToolCall
 from workspace_indexer.obs.logging import get_logger
 from workspace_indexer.state.chunk_delta import ChunkDelta
@@ -437,6 +439,63 @@ class Manifest:
             )
             for r in rows
         ]
+
+    def record_routes(
+        self,
+        root_label: str,
+        rel_path: str,
+        declarations: Iterable[RouteDeclaration],
+        calls: Iterable[RouteCall],
+    ) -> None:
+        """Replace every route edge this file owns.
+
+        Replace rather than merge, for the same reason imports do: a route
+        deleted from the source has to disappear, and comparing edge by edge to
+        discover that costs more than rewriting a handful of rows.
+        """
+        self._db.execute(
+            "DELETE FROM route_edges WHERE root_label = ? AND rel_path = ?",
+            (root_label, rel_path),
+        )
+        rows = [
+            (root_label, rel_path, "declaration", d.template, d.method, d.line, 1)
+            for d in declarations
+        ]
+        rows += [
+            (root_label, rel_path, "call", c.target, None, c.line, int(c.exact)) for c in calls
+        ]
+        self._db.executemany(
+            "INSERT OR REPLACE INTO route_edges "
+            "(root_label, rel_path, kind, template, method, line, exact) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+
+    def route_coverage(self) -> dict[str, tuple[int, int]]:
+        """Per edge kind: how many resolve to a file, and how many exist.
+
+        Both halves, as everywhere else here. A call that resolved to nothing
+        is not an endpoint with no server -- it is one we could not match yet,
+        and reporting only the first number would turn that into a claim.
+        """
+        rows = self._db.execute(
+            "SELECT kind, COUNT(*) AS total, "
+            "SUM(CASE WHEN resolved_path IS NOT NULL THEN 1 ELSE 0 END) AS resolved "
+            "FROM route_edges GROUP BY kind"
+        )
+        return {str(r["kind"]): (int(r["resolved"] or 0), int(r["total"])) for r in rows}
+
+    def route_precision(self) -> tuple[int, int]:
+        """Calls whose whole URL was recoverable, and calls in total.
+
+        The rest gave up only a static prefix, which names an endpoint but
+        cannot separate two routes that share it. Worth reporting on its own:
+        it is the ceiling on how precise any matching can be.
+        """
+        row = self._db.execute(
+            "SELECT COUNT(*) AS total, SUM(exact) AS exact FROM route_edges WHERE kind = 'call'"
+        ).fetchone()
+        return (int(row["exact"] or 0), int(row["total"] or 0))
 
     def find_paths(self, needle: str, limit: int = 8) -> list[tuple[str, str]]:
         """Indexed files whose path is, or ends with, `needle`.
