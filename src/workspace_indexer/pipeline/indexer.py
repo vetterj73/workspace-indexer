@@ -27,6 +27,16 @@ from workspace_indexer.storage.vector_store import VectorStore
 
 log = get_logger("workspace_indexer.pipeline")
 
+# When a run would remove this share of a root's recorded files, and at least
+# this many, it stops and asks instead. Deleting from an absence is right when
+# the files really went; a bad checkout produces exactly the same evidence.
+#
+# Both conditions together, deliberately. The share alone would stop a root of
+# three files every time one was removed; the floor alone would ignore a
+# repository that lost everything but happened to hold only nine files.
+_MAX_SHARE_TO_DELETE = 0.5
+_MIN_DELETIONS_TO_QUESTION = 10
+
 # Chunks buffered before an embedding request goes out. Large enough that a
 # small file does not cost its own round trip, small enough that a failure
 # loses little work.
@@ -61,7 +71,12 @@ class Indexer:
         self._imports = ImportScanner()
 
     async def run(
-        self, *, only_root: str | None = None, force: bool = False, dry_run: bool = False
+        self,
+        *,
+        only_root: str | None = None,
+        force: bool = False,
+        dry_run: bool = False,
+        allow_deletes: bool = False,
     ) -> RunStats:
         stats = RunStats(
             run_id=new_run_id(),
@@ -83,7 +98,13 @@ class Indexer:
                 await self._store.ensure_collection(self._space)
                 await self._warn_if_store_diverges()
 
-            await self._index(stats, only_root=only_root, force=force, dry_run=dry_run)
+            await self._index(
+                stats,
+                only_root=only_root,
+                force=force,
+                dry_run=dry_run,
+                allow_deletes=allow_deletes,
+            )
 
             stats.finished_at = datetime.now(UTC)
             if not dry_run:
@@ -140,7 +161,13 @@ class Indexer:
             )
 
     async def _index(
-        self, stats: RunStats, *, only_root: str | None, force: bool, dry_run: bool
+        self,
+        stats: RunStats,
+        *,
+        only_root: str | None,
+        force: bool,
+        dry_run: bool,
+        allow_deletes: bool,
     ) -> None:
         walker = Walker(self._config)
         candidates = list(walker.walk(only_root=only_root))
@@ -193,7 +220,13 @@ class Indexer:
         if not dry_run:
             for root_label, rel_path in purged:
                 await self._purge(root_label, rel_path, stats)
-            await self._remove_orphans(seen, stats, only_root=only_root)
+            await self._remove_orphans(
+                seen,
+                stats,
+                only_root=only_root,
+                unobservable=walker.unobservable_roots,
+                allow_deletes=allow_deletes,
+            )
             self._resolve_imports(stats)
 
     def _prepare(
@@ -357,9 +390,50 @@ class Indexer:
                 log.warning("file.purged", chunks=len(existing), reason="secret_withheld")
 
     async def _remove_orphans(
-        self, seen: set[tuple[str, str]], stats: RunStats, *, only_root: str | None
+        self,
+        seen: set[tuple[str, str]],
+        stats: RunStats,
+        *,
+        only_root: str | None,
+        unobservable: set[str],
+        allow_deletes: bool,
     ) -> None:
-        for root_label, rel_path in self._manifest.orphans(seen, root_label=only_root):
+        """Rung 5, with two brakes on it.
+
+        Deleting what is no longer on disk is correct and necessary. It is also
+        the one thing here that destroys work, and it decides that from an
+        *absence* -- which is exactly the evidence a partial checkout, an
+        unmounted volume or a failed clone also produces.
+
+        The brakes exist because one collection spans several repositories. A
+        CI job checks out one of them and can see nothing of the others, so an
+        unscoped run would read four repositories' worth of absence as four
+        repositories' worth of deletion.
+        """
+        candidates = self._manifest.orphans(seen, root_label=only_root)
+
+        # A root we could not read has not been shown to be empty. No override
+        # for this one: there is no evidence to weigh, only the lack of it.
+        blocked = [pair for pair in candidates if pair[0] in unobservable]
+        if blocked:
+            stats.deletions_withheld += len(blocked)
+            log.error(
+                "orphans.root_unreadable",
+                roots=sorted({root for root, _ in blocked}),
+                files=len(blocked),
+                detail="these roots are configured but absent from disk; their indexed "
+                "files were left alone. Point the run at what it can see with "
+                "--root, or fix the checkout.",
+            )
+        candidates = [pair for pair in candidates if pair[0] not in unobservable]
+
+        for root_label, deletions in _by_root(candidates).items():
+            if allow_deletes or not self._looks_like_an_accident(root_label, deletions):
+                continue
+            stats.deletions_withheld += len(deletions)
+            candidates = [pair for pair in candidates if pair[0] != root_label]
+
+        for root_label, rel_path in candidates:
             with file_context(root_label, rel_path):
                 ids = self._manifest.chunk_ids_for(root_label, rel_path, self._space.slug())
                 # By path rather than by id: correct even if the manifest and
@@ -368,6 +442,36 @@ class Indexer:
                 self._manifest.forget_file(root_label, rel_path)
                 stats.chunks_deleted += len(ids)
                 log.info("file.removed", chunks=len(ids))
+
+    def _looks_like_an_accident(self, root_label: str, deletions: list[tuple[str, str]]) -> bool:
+        """Would this remove most of a root at once?
+
+        A repository restructure legitimately trips this, and the operator says
+        so with --allow-deletes. An empty directory where a checkout should be
+        also trips it, and there the flag is the difference between noticing
+        and finding out later.
+
+        Both conditions, so a small root does not trip on every ordinary
+        removal: proportion catches the mass event, and the floor keeps a root
+        of four files from being a mass event every time one goes.
+        """
+        recorded = self._manifest.file_count(root_label)
+        if not recorded or len(deletions) < _MIN_DELETIONS_TO_QUESTION:
+            return False
+        share = len(deletions) / recorded
+        if share < _MAX_SHARE_TO_DELETE:
+            return False
+        log.error(
+            "orphans.mass_deletion_withheld",
+            root=root_label,
+            files=len(deletions),
+            recorded=recorded,
+            share=round(share, 2),
+            detail="this would remove most of a root at once, which is what an empty "
+            "or half-finished checkout looks like. Nothing was deleted. Re-run with "
+            "--allow-deletes if the files really are gone.",
+        )
+        return True
 
     def _resolve_imports(self, stats: RunStats) -> None:
         """Point each import edge at the file it names, where that is decidable.
@@ -415,3 +519,16 @@ _CHUNKER_FOR_KIND = {
     "image": "opaque",
     "opaque": "opaque",
 }
+
+
+def _by_root(pairs: list[tuple[str, str]]) -> dict[str, list[tuple[str, str]]]:
+    """Group (root_label, rel_path) by root, so each root is judged alone.
+
+    One root emptying out says nothing about another, and a workspace-wide
+    proportion would let a large repository's normal churn hide a small
+    repository disappearing entirely.
+    """
+    grouped: dict[str, list[tuple[str, str]]] = {}
+    for root_label, rel_path in pairs:
+        grouped.setdefault(root_label, []).append((root_label, rel_path))
+    return grouped

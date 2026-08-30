@@ -7,6 +7,7 @@ assertion about "zero embedding calls" is the cost guarantee being enforced.
 
 from __future__ import annotations
 
+import shutil
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -658,3 +659,103 @@ async def test_an_unresolvable_import_is_not_an_error(harness: Harness, workspac
     coverage = harness.manifest.resolution_coverage()
     resolved, total = coverage["python"]
     assert total > resolved
+
+
+async def test_a_root_missing_from_disk_is_not_treated_as_emptied(
+    two_roots: tuple[Path, Path, WorkspaceConfig], tmp_path: Path
+) -> None:
+    """The CI accident, exactly.
+
+    One collection spans several repositories, and a CI job checks out one of
+    them. `workspace.yaml` still declares all of them, so an unscoped run walks
+    a workspace where four roots simply are not there -- and reads four
+    repositories' worth of absence as four repositories' worth of deletion.
+
+    A root that cannot be read has not been shown to be empty. There is no
+    override for this one: there is no evidence to weigh, only the lack of it.
+    """
+    _, code, config = two_roots
+    client = AsyncQdrantClient(path=str(tmp_path / "qdrant"))
+    store = QdrantStore(client, workspace=config.workspace.name, payload_indexes=False)
+
+    with Manifest(tmp_path / "manifest.sqlite3") as manifest:
+        harness = Harness(config, store, manifest, tmp_path)
+        await harness.indexer().run()
+        assert await _chunks_in(store, "code")
+
+        # The runner never checked this repository out.
+        shutil.rmtree(code)
+
+        stats = await harness.indexer().run()
+
+        assert await _chunks_in(store, "code"), "an unreadable root's index was deleted"
+        assert stats.deletions_withheld == 2
+        assert stats.chunks_deleted == 0
+    await client.close()
+
+
+async def test_losing_most_of_a_root_at_once_stops_and_asks(
+    config_for: ConfigFactory, workspace: Path, tmp_path: Path
+) -> None:
+    """An empty directory where a checkout should be looks identical to a
+    repository whose files really were removed. The difference matters enough
+    to ask rather than assume."""
+    client = AsyncQdrantClient(path=str(tmp_path / "qdrant"))
+    store = QdrantStore(client, workspace="test", payload_indexes=False)
+
+    with Manifest(tmp_path / "manifest.sqlite3") as manifest:
+        harness = Harness(config_for(), store, manifest, tmp_path)
+        first = await harness.indexer().run()
+        assert first.files_changed >= 10
+
+        for path in sorted(workspace.rglob("*")):
+            if path.is_file():
+                path.unlink()
+
+        stats = await harness.indexer().run()
+
+        assert stats.chunks_deleted == 0
+        assert stats.deletions_withheld >= 10
+    await client.close()
+
+
+async def test_allow_deletes_lets_a_real_mass_removal_through(
+    config_for: ConfigFactory, workspace: Path, tmp_path: Path
+) -> None:
+    """The brake has to be releasable, or a genuine restructure cannot be
+    indexed at all."""
+    client = AsyncQdrantClient(path=str(tmp_path / "qdrant"))
+    store = QdrantStore(client, workspace="test", payload_indexes=False)
+
+    with Manifest(tmp_path / "manifest.sqlite3") as manifest:
+        harness = Harness(config_for(), store, manifest, tmp_path)
+        await harness.indexer().run()
+        for path in sorted(workspace.rglob("*")):
+            if path.is_file():
+                path.unlink()
+
+        stats = await harness.indexer().run(allow_deletes=True)
+
+        assert stats.deletions_withheld == 0
+        assert stats.chunks_deleted > 0
+    await client.close()
+
+
+async def test_an_ordinary_deletion_is_not_second_guessed(
+    config_for: ConfigFactory, workspace: Path, tmp_path: Path
+) -> None:
+    """The guard must not turn every removed file into a prompt. One file gone
+    from a full workspace is the common case and has to keep working."""
+    client = AsyncQdrantClient(path=str(tmp_path / "qdrant"))
+    store = QdrantStore(client, workspace="test", payload_indexes=False)
+
+    with Manifest(tmp_path / "manifest.sqlite3") as manifest:
+        harness = Harness(config_for(), store, manifest, tmp_path)
+        await harness.indexer().run()
+
+        (workspace / "repo_one" / "src" / "widget.py").unlink()
+        stats = await harness.indexer().run()
+
+        assert stats.deletions_withheld == 0
+        assert stats.chunks_deleted > 0
+    await client.close()
