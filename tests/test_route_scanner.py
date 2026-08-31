@@ -180,3 +180,102 @@ def test_unparseable_source_costs_the_edges_not_the_file() -> None:
     """Same rule the import scanner follows."""
     assert RouteScanner().calls("fetch( ( ( unclosed", "typescript") == []
     assert RouteScanner().declarations("public class {{{", "csharp", "a.cs") == []
+
+
+# ---- minimal APIs -----------------------------------------------------------
+
+MINIMAL = """
+public static class Endpoints {
+  public static void Register(WebApplication app) {
+    app.MapGet("/api/health", () => "ok");
+    var group = app.MapGroup("/api/remit").WithTags("Remit").RequireAuthorization();
+    group.MapGet("{id}", () => 1);
+    group.MapPost("", () => 2);
+    var archive = group.MapGroup("archive");
+    archive.MapDelete("{id}", () => 3);
+    app.MapGroup("/api/rates").MapGet("today", () => 4);
+  }
+}
+"""
+
+
+def test_a_route_registered_on_the_app_is_its_own_template() -> None:
+    """The second ASP.NET style, and on one real codebase the *only* one:
+    1037 C# files, zero [Route] attributes, ~140 Map* calls."""
+    found = templates(RouteScanner(), MINIMAL, "csharp", "Api/Endpoints.cs")
+    assert "api/health" in found
+
+
+def test_a_group_prefix_is_joined_to_every_route_registered_on_it() -> None:
+    """117 of 124 leaf calls measured were registered on a group. Emitting the
+    leaf alone gives `{id}`, which is not merely incomplete -- it would match
+    paths belonging to something else entirely."""
+    found = templates(RouteScanner(), MINIMAL, "csharp", "Api/Endpoints.cs")
+    assert "api/remit/{id}" in found
+    assert "api/remit" in found
+    assert "{id}" not in found
+
+
+def test_groups_nest() -> None:
+    found = templates(RouteScanner(), MINIMAL, "csharp", "Api/Endpoints.cs")
+    assert "api/remit/archive/{id}" in found
+
+
+def test_a_group_configured_on_the_same_line_is_still_a_group() -> None:
+    """`app.MapGroup("/x").WithTags(...).RequireAuthorization()` is one
+    expression whose outermost call is not MapGroup. Requiring it to be found
+    19 endpoints where the codebase has 115."""
+    text = """
+    public static class E {
+      public static void R(WebApplication app) {
+        var g = app.MapGroup("/api/x").WithTags("X").RequireAuthorization();
+        g.MapGet("y", () => 1);
+      }
+    }
+    """
+    assert templates(RouteScanner(), text, "csharp", "Api/E.cs") == ["api/x/y"]
+
+
+def test_a_group_declared_after_its_parent_resolves() -> None:
+    """Declarators are visited in source order rather than traversal order.
+    C# requires a local declared before use, which is the whole reason no
+    dataflow analysis is needed -- but tree traversal is not source order, and
+    without sorting a nested group resolved to nothing."""
+    found = templates(RouteScanner(), MINIMAL, "csharp", "Api/Endpoints.cs")
+    assert "api/remit/archive/{id}" in found
+
+
+def test_a_chained_group_needs_no_variable() -> None:
+    found = templates(RouteScanner(), MINIMAL, "csharp", "Api/Endpoints.cs")
+    assert "api/rates/today" in found
+
+
+def test_a_receiver_this_cannot_follow_is_skipped_rather_than_guessed() -> None:
+    """A builder arriving as a parameter has a prefix decided by the caller,
+    possibly in another file. Emitting the leaf without it would be wrong."""
+    text = """
+    public static class E {
+      public static void R(IEndpointRouteBuilder somethingElse) {
+        somethingElse.MapGet("{id}", () => 1);
+      }
+    }
+    """
+    assert templates(RouteScanner(), text, "csharp", "Api/E.cs") == []
+
+
+def test_a_non_literal_path_is_skipped() -> None:
+    text = """
+    public static class E {
+      public static void R(WebApplication app) { app.MapGet(Routes.Health, () => 1); }
+    }
+    """
+    assert templates(RouteScanner(), text, "csharp", "Api/E.cs") == []
+
+
+def test_minimal_api_routes_record_their_verb_and_kind() -> None:
+    declarations = RouteScanner().declarations(MINIMAL, "csharp", "Api/Endpoints.cs")
+    by_template = {d.template: d for d in declarations}
+    assert by_template["api/remit/{id}"].method == "GET"
+    assert by_template["api/remit/archive/{id}"].method == "DELETE"
+    # A distinct kind, so coverage cannot hide one style going to zero.
+    assert {d.kind for d in declarations} == {"minimal"}

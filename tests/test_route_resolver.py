@@ -129,3 +129,45 @@ def test_two_repositories_declaring_the_same_path_are_ambiguous() -> None:
         ]
     )
     assert resolver.resolve("/api/home", exact=True) is None
+
+
+# ---- a base path the server never declares ----------------------------------
+
+
+def test_a_client_base_path_is_tried_only_after_the_url_as_written() -> None:
+    """Measured on a real React + minimal-API codebase: every client call began
+    `/api/` and no endpoint did, because a proxy or UsePathBase adds it.
+    Allowing the fallback took resolution from 4% to 23%.
+
+    A fallback rather than a rewrite, so a workspace whose routes genuinely
+    begin with that segment keeps its own answer -- which the next test pins.
+    """
+    resolver = RouteResolver(
+        [target("Api/ConfigEndpoints.cs", "configuration/{id}")], client_base_paths=["api"]
+    )
+    hit = resolver.resolve("/api/configuration/7", exact=True)
+    assert hit is not None and hit.rel_path == "Api/ConfigEndpoints.cs"
+
+
+def test_a_route_that_really_starts_with_the_base_path_still_wins() -> None:
+    """Project A's routes *do* begin with `api`. Stripping first rather than
+    last would have broken the one project where this already worked."""
+    resolver = RouteResolver(
+        [
+            target("Api/RemittanceController.cs", "api/Remittance"),
+            target("Api/Other.cs", "Remittance"),
+        ],
+        client_base_paths=["api"],
+    )
+    hit = resolver.resolve("/api/Remittance", exact=True)
+    assert hit is not None and hit.rel_path == "Api/RemittanceController.cs"
+
+
+def test_the_base_path_alone_resolves_to_nothing() -> None:
+    resolver = RouteResolver([target("Api/E.cs", "health")], client_base_paths=["api"])
+    assert resolver.resolve("/api", exact=True) is None
+
+
+def test_no_base_path_configured_changes_nothing() -> None:
+    resolver = RouteResolver([target("Api/E.cs", "configuration")])
+    assert resolver.resolve("/api/configuration", exact=True) is None

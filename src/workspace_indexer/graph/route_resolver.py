@@ -21,6 +21,7 @@ has an unambiguous answer even when the endpoint does not.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 
 from workspace_indexer.graph.route_target import RouteTarget
 from workspace_indexer.obs.logging import get_logger
@@ -50,8 +51,11 @@ def segments(url: str) -> list[str]:
 
 
 class RouteResolver:
-    def __init__(self, declarations: list[RouteTarget]) -> None:
+    def __init__(
+        self, declarations: list[RouteTarget], client_base_paths: Sequence[str] = ()
+    ) -> None:
         self._targets = [(segments(target.template), target) for target in declarations]
+        self._base_paths = [segments(path) for path in client_base_paths if segments(path)]
 
     def resolve(self, target_url: str, *, exact: bool) -> RouteTarget | None:
         """The file this call reaches, or None when that cannot be decided.
@@ -66,6 +70,20 @@ class RouteResolver:
         if not wanted:
             return None
 
+        hit = self._match(wanted, exact=exact)
+        if hit is not None:
+            return hit
+        # Only now: a base path the server never declares, added by a proxy or
+        # UsePathBase. Tried as a fallback rather than up front so a workspace
+        # whose routes really do begin with that segment keeps its own answer.
+        for base in self._base_paths:
+            if wanted[: len(base)] == base and len(wanted) > len(base):
+                stripped = self._match(wanted[len(base) :], exact=exact)
+                if stripped is not None:
+                    return stripped
+        return None
+
+    def _match(self, wanted: list[str], *, exact: bool) -> RouteTarget | None:
         matches = [
             target
             for template, target in self._targets
@@ -81,7 +99,7 @@ class RouteResolver:
         if len(files) > 1:
             log.debug(
                 "routes.ambiguous",
-                url=target_url,
+                url="/".join(wanted),
                 files=len(files),
                 detail="the same path is declared in more than one file; left unresolved",
             )

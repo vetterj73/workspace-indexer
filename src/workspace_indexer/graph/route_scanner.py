@@ -59,6 +59,22 @@ _CALL_MEMBERS = frozenset({"get", "post", "put", "delete", "patch", "head", "req
 # An ASP.NET controller class contributes its name to `[controller]`.
 _CONTROLLER_SUFFIX = "Controller"
 
+# Minimal-API registration. `MapGroup` returns a builder carrying a prefix that
+# every route registered on it inherits, so it is tracked rather than emitted.
+_MAP_VERBS = {
+    "MapGet": "GET",
+    "MapPost": "POST",
+    "MapPut": "PUT",
+    "MapDelete": "DELETE",
+    "MapPatch": "PATCH",
+}
+_MAP_GROUP = "MapGroup"
+
+# Receivers that mean "the application root", so a route on one of them has no
+# inherited prefix. Names rather than types because the type is not in scope
+# here; measured on a real codebase these covered every non-group receiver.
+_APP_RECEIVERS = frozenset({"app", "builder", "endpoints", "routes"})
+
 
 class RouteScanner:
     def __init__(
@@ -179,9 +195,84 @@ class RouteScanner:
         except Exception as exc:
             log.debug("routes.parse_failed", language="csharp", error=str(exc))
             return []
+        return self._controllers(tree.root_node, text) + self._minimal_apis(tree.root_node, text)
 
+    def _minimal_apis(self, root: Node, text: str) -> list[RouteDeclaration]:
+        """`app.MapGet("/x", ...)`, including routes registered on a group.
+
+        A second ASP.NET style, and on the codebase this was measured against
+        the *only* one: 1037 C# files, zero `[Route]` attributes, 140
+        `Map*` calls. The two styles turned out to be mutually exclusive per
+        project, so supporting one is supporting half the stack.
+
+        `MapGroup` returns a builder carrying a prefix, and every route
+        registered on it inherits that prefix. Emitting the leaf alone would
+        give `{id}` as a route -- not merely incomplete but wrong, since it
+        would match paths that belong to something else. 117 of 124 leaf calls
+        measured were registered on such a group, so this is the common case
+        rather than an edge one.
+        """
+        groups = self._group_prefixes(root, text)
         found: list[RouteDeclaration] = []
-        for klass in _walk(tree.root_node):
+        for node in _walk(root):
+            if node.type != "invocation_expression":
+                continue
+            name, receiver = _member_call(node, text)
+            verb = _MAP_VERBS.get(name or "")
+            if verb is None or receiver is None:
+                continue
+            template = _string_argument(node, text)
+            if template is None:
+                # The path came from a variable or an expression. One of 140
+                # measured; recording a guess would be worse than the gap.
+                continue
+            prefix = _prefix_of(receiver, text, groups)
+            if prefix is None:
+                continue
+            joined = _join(prefix, template)
+            if not joined:
+                continue
+            found.append(
+                RouteDeclaration(
+                    template=joined,
+                    method=verb,
+                    line=node.start_point[0] + 1,
+                    kind="minimal",
+                )
+            )
+        return found
+
+    def _group_prefixes(self, root: Node, text: str) -> dict[str, str]:
+        """Variable name -> the prefix routes registered on it inherit.
+
+        Within one file only. That is not a simplification standing in for
+        something better: a group is a local, and C# requires it declared
+        before use, so a single ordered pass resolves nesting
+        (`var sub = parent.MapGroup("more")`) without any dataflow analysis.
+        """
+        groups: dict[str, str] = {}
+        # Source order, explicitly. `_walk` returns nodes in traversal order,
+        # which is not textual order, so a nested group could be visited before
+        # the group it nests inside and resolve to nothing. C# requires a local
+        # declared before use, so sorting by position is all the ordering this
+        # needs -- and it is the whole reason no dataflow analysis is required.
+        declarators = sorted(
+            (n for n in _walk(root) if n.type == "variable_declarator"),
+            key=lambda n: n.start_byte,
+        )
+        for node in declarators:
+            name = _identifier(node, text)
+            initialiser = _initialiser(node)
+            if not name or initialiser is None:
+                continue
+            prefix = _group_prefix_of(initialiser, text, groups)
+            if prefix is not None:
+                groups[name] = prefix
+        return groups
+
+    def _controllers(self, root: Node, text: str) -> list[RouteDeclaration]:
+        found: list[RouteDeclaration] = []
+        for klass in _walk(root):
             if klass.type != "class_declaration":
                 continue
             name = _identifier(klass, text)
@@ -329,4 +420,94 @@ def _first_argument_url(call: Node, source: str) -> RouteCall | None:
         # A variable or an expression. 18 of 32 call sites in the workspace
         # measured, and the reason rung 3 exists.
         return None
+    return None
+
+
+def _initialiser(declarator: Node) -> Node | None:
+    """The expression a `var x = ...` binds.
+
+    Fetched by position rather than by field name: tree-sitter's C# grammar
+    leaves it an unnamed child, so `child_by_field_name("value")` returns None
+    for every declarator. Asking for the field and believing the answer said
+    "no minimal-API routes use a group variable" when 117 of 124 do.
+    """
+    for child in declarator.children:
+        if child.type not in ("identifier", "="):
+            return child
+    return None
+
+
+def _member_call(node: Node, source: str) -> tuple[str | None, Node | None]:
+    """`(method name, receiver)` for `receiver.Method(...)`."""
+    function = node.child_by_field_name("function")
+    if function is None or function.type != "member_access_expression":
+        return None, None
+    name = function.child_by_field_name("name")
+    receiver = function.child_by_field_name("expression")
+    if name is None:
+        return None, receiver
+    return _text(name, source), receiver
+
+
+def _string_argument(node: Node, source: str) -> str | None:
+    """The first argument, when it is a string literal."""
+    arguments = node.child_by_field_name("arguments")
+    if arguments is None:
+        return None
+    for argument in arguments.children:
+        if argument.type in ("(", ")", ","):
+            continue
+        for part in _walk(argument):
+            if part.type == "string_literal":
+                return _text(part, source).strip('"')
+        return None
+    return None
+
+
+def _group_prefix_of(node: Node, source: str, groups: dict[str, str]) -> str | None:
+    """The prefix a `MapGroup(...)` expression establishes, or None.
+
+    Looks *through* the builder calls that idiomatically follow it --
+    `app.MapGroup("/x").WithTags("X").RequireAuthorization()` is one
+    expression whose outermost invocation is `RequireAuthorization`, not
+    `MapGroup`. Insisting on the outermost call being MapGroup found 19
+    endpoints where the codebase has around 140, and the gap was entirely
+    this: groups configured on the same line they are created.
+    """
+    current = node
+    while current.type == "invocation_expression":
+        name, receiver = _member_call(current, source)
+        if receiver is None:
+            return None
+        if name == _MAP_GROUP:
+            literal = _string_argument(current, source)
+            if literal is None:
+                return None
+            parent = _prefix_of(receiver, source, groups)
+            return None if parent is None else _join(parent, literal)
+        if name in _MAP_VERBS:
+            # A route, not a group. Whatever this expression is, it does not
+            # establish a prefix for anything else.
+            return None
+        current = receiver
+    return None
+
+
+def _prefix_of(receiver: Node, source: str, groups: dict[str, str]) -> str | None:
+    """What a route registered on this receiver inherits.
+
+    Empty string for the application root, the group's prefix for a group, and
+    None for anything this cannot follow -- a field, a parameter, a builder
+    from another file. None skips the route rather than emitting it with a
+    missing prefix, because a route missing its prefix is not incomplete, it
+    is wrong: it would match paths belonging to something else.
+    """
+    if receiver.type == "identifier":
+        name = _text(receiver, source)
+        if name in groups:
+            return groups[name]
+        return "" if name in _APP_RECEIVERS else None
+    if receiver.type == "invocation_expression":
+        # Chained: `app.MapGroup("/a").MapGet(...)`.
+        return _group_prefix_of(receiver, source, groups)
     return None

@@ -114,6 +114,10 @@ graph:
   # Directory whose contents map to routes by file path. Razor Pages usually
   # declares `@page` with no template and derives the URL from location.
   razor_pages_dir: Pages
+  # Segments the client prepends that the server never declares -- added by a
+  # proxy, a dev-server rewrite, or UsePathBase. Tried only after the URL as
+  # written fails, so routes that really do start with `api` are unaffected.
+  client_base_paths: [api]
 
 eval:
   dataset: ./config/eval.yaml
