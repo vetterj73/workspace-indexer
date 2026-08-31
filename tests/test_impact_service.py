@@ -265,3 +265,72 @@ def test_a_plain_importer_is_not_flagged_as_a_hop(graph: Manifest) -> None:
     noise the agent learns to skip."""
     report = ImpactService(graph).impact_of("app/src/helper.py")
     assert report.note is not None and "re-export" not in report.note
+
+
+def add_route_call(
+    manifest: Manifest,
+    caller: str,
+    url: str,
+    *,
+    line: int = 1,
+    exact: bool = True,
+) -> None:
+    from workspace_indexer.graph.route_call import RouteCall
+
+    manifest.record_routes(ROOT, caller, [], [RouteCall(target=url, line=line, exact=exact)])
+
+
+def add_route_declaration(manifest: Manifest, path: str, template: str) -> None:
+    from workspace_indexer.graph.route_declaration import RouteDeclaration
+
+    manifest.record_routes(
+        ROOT,
+        path,
+        [RouteDeclaration(template=template, method="GET", line=1, kind="controller")],
+        [],
+    )
+
+
+def test_an_http_caller_is_reported_and_kept_apart_from_importers(
+    manifest: Manifest,
+) -> None:
+    """An importer breaks at compile time; a caller over HTTP breaks at run
+    time, in another repository, possibly deployed separately. Merging them
+    would hide the distinction that makes the question worth asking."""
+    from workspace_indexer.graph.route_target import RouteTarget
+
+    add_file(manifest, "api/Api/RemittanceController.cs", language="csharp")
+    add_file(manifest, "web/app/page.ts", language="typescript")
+    add_route_declaration(manifest, "api/Api/RemittanceController.cs", "api/Remittance")
+    add_route_call(manifest, "web/app/page.ts", "/api/Remittance")
+    manifest.set_route_resolution(
+        ROOT,
+        "web/app/page.ts",
+        "/api/Remittance",
+        1,
+        RouteTarget(
+            root_label=ROOT,
+            rel_path="api/Api/RemittanceController.cs",
+            template="api/Remittance",
+        ),
+    )
+
+    report = ImpactService(manifest).impact_of("api/Api/RemittanceController.cs")
+
+    assert [c.rel_path for c in report.called_by] == ["web/app/page.ts"]
+    assert report.called_by_total == 1
+    # Not folded into the import relationship.
+    assert report.used_by == []
+    assert report.note is not None and "over HTTP" in report.note
+
+
+def test_the_calling_side_lists_what_it_reaches(manifest: Manifest) -> None:
+    add_file(manifest, "web/app/page.ts", language="typescript")
+    add_route_call(manifest, "web/app/page.ts", "/api/Remittance")
+
+    report = ImpactService(manifest).impact_of("web/app/page.ts")
+
+    assert [c.module for c in report.calls] == ["/api/Remittance"]
+    assert report.calls_total == 1
+    # Unresolved, and saying so rather than implying the endpoint is missing.
+    assert report.calls[0].resolved is False

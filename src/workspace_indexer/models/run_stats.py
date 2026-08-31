@@ -31,6 +31,10 @@ class RunStats(BaseModel):
     # package, a tsconfig alias and a C# namespace all need more than the
     # file list, and stay unresolved rather than being guessed at.
     imports_resolved: int = 0
+    # Client call sites matched to the file declaring the endpoint. Counted
+    # separately from imports because the two resolve under opposite rules --
+    # an import inside its own repository, a route across them.
+    routes_resolved: int = 0
     # Files this run would have removed from the index but did not, because
     # the deletion looked more like a bad checkout than a real removal.
     # Counted rather than logged alone: a warning in CI output is not a brake.

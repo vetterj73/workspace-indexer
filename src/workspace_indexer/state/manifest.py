@@ -26,6 +26,7 @@ from workspace_indexer.graph.dependent import Dependent
 from workspace_indexer.graph.import_edge import ImportEdge
 from workspace_indexer.graph.route_call import RouteCall
 from workspace_indexer.graph.route_declaration import RouteDeclaration
+from workspace_indexer.graph.route_target import RouteTarget
 from workspace_indexer.models import Chunk, DocumentType, RunStats, SourceFile, ToolCall
 from workspace_indexer.obs.logging import get_logger
 from workspace_indexer.state.chunk_delta import ChunkDelta
@@ -73,6 +74,7 @@ class Manifest:
                 "cost_is_estimate": "INTEGER NOT NULL DEFAULT 0",
             },
             "imports": {"resolved_path": "TEXT"},
+            "route_edges": {"resolved_root": "TEXT"},
         }
         for table, columns in additions.items():
             existing = {str(row["name"]) for row in self._db.execute(f"PRAGMA table_info({table})")}
@@ -470,6 +472,111 @@ class Manifest:
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
+
+    def route_targets(self) -> list[RouteTarget]:
+        """Every declared endpoint, across every root.
+
+        Every root deliberately: this is the one resolver in the codebase that
+        must look outside the file's own repository, because a page calling an
+        API is the case it exists for.
+        """
+        rows = self._db.execute(
+            "SELECT root_label, rel_path, template FROM route_edges WHERE kind = 'declaration'"
+        )
+        return [
+            RouteTarget(
+                root_label=str(r["root_label"]),
+                rel_path=str(r["rel_path"]),
+                template=str(r["template"]),
+            )
+            for r in rows
+        ]
+
+    def unresolved_calls(self) -> list[tuple[str, str, str, int, bool]]:
+        """Every call with no target yet, as (root, path, template, line, exact).
+
+        After the walk rather than during it, for the same reason imports
+        resolve late: a call can name an endpoint in a repository the walk has
+        not reached, so resolving per file would depend on walk order.
+        """
+        rows = self._db.execute(
+            "SELECT root_label, rel_path, template, line, exact FROM route_edges "
+            "WHERE kind = 'call' AND resolved_path IS NULL"
+        )
+        return [
+            (
+                str(r["root_label"]),
+                str(r["rel_path"]),
+                str(r["template"]),
+                int(r["line"]),
+                bool(r["exact"]),
+            )
+            for r in rows
+        ]
+
+    def set_route_resolution(
+        self,
+        root_label: str,
+        rel_path: str,
+        template: str,
+        line: int,
+        target: RouteTarget,
+    ) -> None:
+        self._db.execute(
+            "UPDATE route_edges SET resolved_path = ?, resolved_root = ? "
+            "WHERE root_label = ? AND rel_path = ? AND kind = 'call' "
+            "AND template = ? AND line = ?",
+            (target.rel_path, target.root_label, root_label, rel_path, template, line),
+        )
+
+    def route_callers_of(self, root_label: str, rel_path: str) -> list[Dependent]:
+        """Which files call an endpoint this file declares.
+
+        The reverse edge, and the one nothing else in this codebase can
+        answer: it crosses repositories, and the two files share a string
+        rather than a symbol.
+        """
+        rows = self._db.execute(
+            "SELECT r.root_label AS root_label, r.rel_path AS rel_path, r.line AS line, "
+            "r.template AS template, f.doc_type AS doc_type, f.language AS language "
+            "FROM route_edges r JOIN files f "
+            "ON f.root_label = r.root_label AND f.rel_path = r.rel_path "
+            "WHERE r.kind = 'call' AND r.resolved_root = ? AND r.resolved_path = ? "
+            "ORDER BY r.root_label, r.rel_path, r.line",
+            (root_label, rel_path),
+        )
+        return [
+            Dependent(
+                rel_path=str(r["rel_path"]),
+                line=int(r["line"]),
+                module=str(r["template"]),
+                doc_type=str(r["doc_type"]),
+                language=str(r["language"]) if r["language"] else None,
+            )
+            for r in rows
+        ]
+
+    def route_calls_from(self, root_label: str, rel_path: str) -> list[Dependency]:
+        """Which endpoints this file calls, resolved where possible."""
+        rows = self._db.execute(
+            "SELECT r.template AS template, r.line AS line, r.resolved_path AS resolved_path, "
+            "f.doc_type AS doc_type, f.language AS language "
+            "FROM route_edges r LEFT JOIN files f "
+            "ON f.root_label = r.resolved_root AND f.rel_path = r.resolved_path "
+            "WHERE r.kind = 'call' AND r.root_label = ? AND r.rel_path = ? "
+            "ORDER BY r.line",
+            (root_label, rel_path),
+        )
+        return [
+            Dependency(
+                module=str(r["template"]),
+                line=int(r["line"]),
+                rel_path=str(r["resolved_path"]) if r["resolved_path"] else None,
+                doc_type=str(r["doc_type"]) if r["doc_type"] else None,
+                language=str(r["language"]) if r["language"] else None,
+            )
+            for r in rows
+        ]
 
     def route_coverage(self) -> dict[str, tuple[int, int]]:
         """Per edge kind: how many resolve to a file, and how many exist.

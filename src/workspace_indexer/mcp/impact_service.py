@@ -70,6 +70,8 @@ class ImpactService:
 
         dependencies = self._manifest.dependencies_of(root_label, rel_path)
         dependents = self._manifest.dependents_of(root_label, rel_path)
+        callers = self._manifest.route_callers_of(root_label, rel_path)
+        calls = self._manifest.route_calls_from(root_label, rel_path)
         counts = _count_by_type(dependents)
         kept_out = dependencies[:limit]
         kept_in = sorted(dependents, key=_keep_rank)[:limit]
@@ -84,12 +86,17 @@ class ImpactService:
             used_by=kept_in,
             used_by_total=len(dependents),
             used_by_by_type=counts,
+            called_by=callers[:limit],
+            calls=calls[:limit],
+            called_by_total=len(callers),
+            calls_total=len(calls),
             dropped_depends_on=len(dependencies) - len(kept_out),
             dropped_used_by=len(dependents) - len(kept_in),
             note=self._note(
                 language=language,
                 dependencies=dependencies,
                 dependents=dependents,
+                callers=callers,
                 dropped=(len(dependencies) - len(kept_out)) + (len(dependents) - len(kept_in)),
             ),
         )
@@ -100,6 +107,7 @@ class ImpactService:
         language: str | None,
         dependencies: list[Dependency],
         dependents: list[Dependent],
+        callers: list[Dependent],
         dropped: int,
     ) -> str | None:
         """The half of the answer that is about what we could not see.
@@ -112,9 +120,10 @@ class ImpactService:
         if language is None or language not in SUPPORTED:
             named = language or "this file type"
             parts.append(
-                f"Imports are not scanned for {named}, so both lists are empty by "
-                "construction. This says nothing about whether anything depends on "
-                f"this file. Scanned languages: {', '.join(sorted(SUPPORTED))}."
+                f"Imports are not scanned for {named}, so depends_on and used_by are "
+                "empty by construction. This says nothing about whether anything "
+                f"depends on this file. Scanned languages: {', '.join(sorted(SUPPORTED))}."
+                + (" HTTP callers are found separately and are reported above." if callers else "")
             )
         else:
             if not dependents:
@@ -146,6 +155,12 @@ class ImpactService:
                     f"Workspace-wide, {got} of {total} {language} import edges resolve "
                     "to an indexed file."
                 )
+        if callers:
+            parts.append(
+                f"{len(callers)} file(s) reach this one over HTTP rather than by import. "
+                "Those break at run time, in another repository, and a compiler will "
+                "not warn you."
+            )
         if dropped:
             parts.append(
                 f"{dropped} further edge(s) were omitted to stay inside limit; "
