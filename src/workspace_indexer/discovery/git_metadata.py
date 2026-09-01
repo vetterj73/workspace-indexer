@@ -42,6 +42,17 @@ def is_repo(root: Path) -> bool:
     return _git(root, "rev-parse", "--git-dir") is not None
 
 
+def repo_root(path: Path) -> Path | None:
+    """The repository `path` belongs to, or None if it is not in one.
+
+    Asked of git rather than inferred by walking up looking for `.git`, because
+    that directory is a *file* in a worktree and absent entirely in a submodule
+    checkout -- both of which are ordinary states for a checked-out workspace.
+    """
+    top = _git(path if path.is_dir() else path.parent, "rev-parse", "--show-toplevel")
+    return Path(top) if top else None
+
+
 def read_repo_info(root: Path) -> RepoInfo | None:
     """None when the directory is not a repository, which is expected — a
     workspace holds plain folders alongside repos and both get indexed."""

@@ -640,6 +640,20 @@ class Manifest:
         )
         return {str(r["language"]): (int(r["resolved"] or 0), int(r["total"])) for r in rows}
 
+    def indexed_documents(self) -> list[tuple[str, str, str]]:
+        """Every indexed file as (abs_path, rel_path, doc_type).
+
+        Returned raw rather than grouped because the only grouping worth having
+        -- by repository -- cannot be derived from a path. A workspace root can
+        hold a repository nested two directories down, and files above it that
+        are in no repository at all, and the two are indistinguishable until
+        git is asked.
+        """
+        return [
+            (str(row["abs_path"]), str(row["rel_path"]), str(row["doc_type"]))
+            for row in self._db.execute("SELECT abs_path, rel_path, doc_type FROM files")
+        ]
+
     def files_by_unit(self) -> dict[tuple[str, str], set[str]]:
         """Indexed rel_paths grouped by (root_label, unit).
 
