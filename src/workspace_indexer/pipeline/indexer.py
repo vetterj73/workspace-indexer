@@ -541,7 +541,7 @@ class Indexer:
             )
             return
 
-        resolver = RouteResolver(targets)
+        resolver = RouteResolver(targets, self._config.graph.client_base_paths)
         resolved = 0
         for root_label, rel_path, template, line, exact in pending:
             target = resolver.resolve(template, exact=exact)

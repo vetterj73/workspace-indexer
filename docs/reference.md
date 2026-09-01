@@ -178,6 +178,7 @@ rules, not preferences.
 |---|---|---|
 | `http_clients` | `[fetch, axios, ky, superagent]` | Functions that make an HTTP request. **Name whatever your codebase wraps `fetch` in.** A bare name matches `name(...)`; an object name matches its request methods, so `axios` covers `axios.get`. |
 | `razor_pages_dir` | `Pages` | Directory whose contents map to routes by file path. |
+| `client_base_paths` | `[api]` | Segments the client prepends that the server never declares — added by a reverse proxy, a dev-server rewrite, or `UsePathBase`. Tried **only as a fallback**, after the URL as written fails. |
 
 `http_clients` is the setting that decides whether the route graph sees
 anything. Measured on a real React workspace: the default list found **6** call
@@ -186,6 +187,23 @@ sites, and adding the project's own wrapper found **71**. A codebase that wraps
 callers — which reads as "nothing calls this API".
 
 `status` reports that shape explicitly when it sees it.
+
+`client_base_paths` matters more than it looks. Measured on a real React +
+minimal-API codebase, **every** client call began `/api/` and **no** endpoint
+did, because a proxy adds the segment — resolution went from 4% to 23% once the
+fallback existed. It is a fallback rather than a rewrite so that a workspace
+whose routes genuinely begin with `api` (an ASP.NET controller app does) keeps
+its own answer.
+
+Both ASP.NET styles are extracted, and measured on two real projects they were
+**mutually exclusive**: one had 66 `[Route]` attributes and no minimal APIs,
+the other 1037 C# files with zero `[Route]` and ~140 `MapGet`/`MapGroup` calls.
+A group's prefix is joined to every route registered on it, including groups
+configured on the line they are created (`app.MapGroup("/x").WithTags(...)`) and
+nested groups. A route whose builder this cannot follow — one arriving as a
+method parameter, whose prefix the caller decides — is skipped rather than
+emitted without its prefix, because a route missing its prefix is not
+incomplete, it is wrong.
 
 Razor Pages routes come from file location, not the directive: measured on the
 same workspace, **all twenty** `@page` directives were bare. An explicit

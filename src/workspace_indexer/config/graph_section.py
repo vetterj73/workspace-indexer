@@ -27,3 +27,11 @@ class GraphSection(Strict):
     # a real workspace, all 20 directives were bare -- so the convention is the
     # only thing there is to read.
     razor_pages_dir: str = "Pages"
+    # Path segments the client prepends that the server never declares --
+    # added by a reverse proxy, a dev-server rewrite, or UsePathBase.
+    #
+    # Tried only as a fallback, after the URL as written fails, so a workspace
+    # whose routes genuinely start with `api` is unaffected. Measured on a real
+    # React + minimal-API codebase: every client call began `/api/` and no
+    # endpoint did, and allowing the fallback took resolution from 4% to 23%.
+    client_base_paths: list[str] = Field(default_factory=lambda: ["api"])
