@@ -301,11 +301,35 @@ at all is a layout or partial and declares nothing.
 | `eval.metrics` | `[recall@10, mrr@10]` | |
 | `logging.level` | `INFO` | Console level. `.env`'s `LOG_LEVEL` overrides it. |
 | `logging.console` | `pretty` | `pretty`, `json` or `off`. Writes to **stderr**, which is what keeps stdio MCP usable. |
-| `logging.file.path` | `logs/workspace-indexer.jsonl` | Always DEBUG regardless of console level — you cannot retroactively raise a log level after the failure you needed to see. |
+| `logging.file.path` | `logs/workspace-indexer.jsonl` | Always DEBUG regardless of console level — you cannot retroactively raise a log level after the failure you needed to see. **The command's name is inserted before the suffix**, so `serve` writes `workspace-indexer-serve.jsonl` — see below. |
 | `logging.file.max_bytes` | `20971520` | Size-based rotation, because indexer output is bursty. |
 | `logging.file.backup_count` | `10` | |
 | `logging.logfire.enabled` | `false` | |
 | `logging.logfire.send_to_cloud` | `false` | **pydantic-ai instrumentation captures call inputs, and for an embedding call the input is your source code.** Never a default. |
+
+**Each command logs to its own file.** `logging.file.path` names the shape;
+the command is spliced in before the suffix, so `index` writes
+`workspace-indexer-index.jsonl` and `serve` writes `workspace-indexer-serve.jsonl`.
+
+This is not tidiness, it is a correctness fix. `RotatingFileHandler` *renames*
+the live file on rollover, and **Windows refuses to rename a file another
+process holds open** — so a long-running `serve` and a concurrent reindex
+collide with `WinError 32` and one of them dies. POSIX permits the rename,
+which is why this never appears on Linux: the orphaned handle goes on writing
+to an inode nobody can find. Losing the log quietly is the better of the two
+failures and still not one worth having.
+
+It also keeps both readable. A full reindex would otherwise bury a session's
+worth of MCP queries in the same file, and the MCP half is the one you want
+when a search misbehaves mid-session.
+
+Files open on first write, so a command that logs nothing — or aborts on a
+config error before logging — leaves nothing behind.
+
+**A duplicate key in `workspace.yaml` is an error, not a silent overwrite.**
+YAML keeps the last of two identical keys and says nothing, so a whole block,
+comments included, can be edited and have no effect while the file still parses
+and the program still runs. The loader rejects it and names the key and line.
 
 ---
 

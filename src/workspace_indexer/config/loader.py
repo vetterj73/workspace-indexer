@@ -13,6 +13,7 @@ import yaml
 from pydantic import ValidationError
 
 from workspace_indexer.config.config_error import ConfigError
+from workspace_indexer.config.strict_yaml_loader import StrictYamlLoader
 from workspace_indexer.config.workspace_config import WorkspaceConfig
 
 DEFAULT_CONFIG_PATH = Path("config/workspace.yaml")
@@ -28,7 +29,10 @@ def load_workspace_config(path: Path | None = None) -> WorkspaceConfig:
         )
 
     try:
-        raw: Any = yaml.safe_load(target.read_text(encoding="utf-8"))
+        # Strict rather than safe_load: a repeated key is a silent discard,
+        # and a config whose author is reading a block that has no effect is
+        # worse than one that will not load.
+        raw: Any = yaml.load(target.read_text(encoding="utf-8"), Loader=StrictYamlLoader)
     except yaml.YAMLError as exc:
         raise ConfigError(f"{target} is not valid YAML: {exc}") from exc
 

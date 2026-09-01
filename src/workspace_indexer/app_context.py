@@ -49,7 +49,7 @@ class AppContext:
     classifier: DocumentClassifier
 
     @classmethod
-    def build(cls, config_path: Path | None = None) -> AppContext:
+    def build(cls, config_path: Path | None = None, role: str | None = None) -> AppContext:
         config = load_workspace_config(config_path)
         settings = Settings()
         # Applied to the config itself, before anything reads it, so every
@@ -58,7 +58,10 @@ class AppContext:
         config = with_rerank_overrides(config, settings)
 
         # Before anything else runs, so a failure during setup is still logged.
-        configure_logging(_with_env_overrides(config, settings))
+        # `role` names the command, and separates its log file from every
+        # other command's. Two processes sharing a rotating file cannot both
+        # roll it over on Windows -- see configure_logging.
+        configure_logging(_with_env_overrides(config, settings), role)
 
         space = build_space(settings)
         return cls(
