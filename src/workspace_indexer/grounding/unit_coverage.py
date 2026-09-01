@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, computed_field
 
 from workspace_indexer.grounding.grounding_source import GroundingSource
 from workspace_indexer.grounding.rationale_signals import RationaleSignals
@@ -40,12 +40,14 @@ class UnitCoverage(BaseModel):
     # fact about the index, and only the second invalidates the whole row.
     on_disk: bool = True
 
+    @computed_field
     @property
     def verdict(self) -> SourceStrength:
         if not self.sources:
             return SourceStrength.ABSENT
         return max((s.strength for s in self.sources), key=lambda s: _ORDER[s])
 
+    @computed_field
     @property
     def notes(self) -> list[str]:
         """Findings that change what a reader should *do*, not just know."""

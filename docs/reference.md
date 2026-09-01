@@ -424,6 +424,41 @@ nothing to do with the file:
   barrel to follow the next hop. This project's own one-class-per-file mandate
   guarantees the case, and TypeScript barrels behave identically.
 
+**`grounding`** — whether a repository records *why* it is the way it is.
+Answers from the manifest plus `git log` and `git grep`; no embedding call, no
+LLM.
+
+| parameter | type | default | |
+|---|---|---|---|
+| `repo` | string | all | Restrict to one repository, as named in a search result. |
+
+**Call this when `find_guidance` returns nothing, before concluding anything
+from that.** An empty search has two causes — the index missed it, or nobody
+wrote it down — and they call for opposite next moves. Nothing else in the
+index can tell them apart, because both look like zero hits.
+
+Four sources per repository (design docs, normative docs, commit rationale,
+`WHY:`/`DECISION:`/`HACK:` markers), each `absent`, `thin` or `present`. A
+repository's own `verdict` is the **best** of its sources — they are
+alternatives, and thorough design documents answer "why" whether or not the
+commits also do. The report-level `note` inverts that and follows the
+**weakest** repository, because across repositories they are separate
+codebases and an agent told "well covered" on the strength of one would trust
+the others.
+
+Where the verdict is `absent`, the rationale genuinely was not recorded. Say
+so rather than inferring a plausible one: generated rationale would be
+indistinguishable from a retrieved one, and it is the failure this tool exists
+to prevent.
+
+Read `notes`. They carry the findings that change what to do — most usefully
+that a repository's reasons live in an issue tracker this index cannot read,
+which turns "no rationale" into "wrong system".
+
+An unrecognised `repo` is an error naming the indexed ones, never an empty
+result — empty here reads as "records no reasons", the strongest claim the
+tool can make, and a typo must not manufacture it.
+
 ### Resource
 
 `workspace-indexer://taxonomy` serves the same taxonomy as JSON. Both surfaces

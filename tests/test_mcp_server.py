@@ -27,9 +27,11 @@ from workspace_indexer.app_context import AppContext
 from workspace_indexer.chunking.chunk_factory import build_chunk
 from workspace_indexer.config import RerankConfig, SearchSection, Settings
 from workspace_indexer.embedding.embedding_service import EmbeddingService
+from workspace_indexer.grounding import CoverageService
 from workspace_indexer.mcp import (
     TAXONOMY_URI,
     EmptyIndexError,
+    GroundingService,
     ImpactService,
     QueryService,
     TaxonomyService,
@@ -107,7 +109,12 @@ def server(queries: QueryService, tmp_path: Path) -> MCPServer:
     A real SQLite file rather than a stub: the graph tools are SQL, and a mock
     would confirm our assumptions about the query instead of the query.
     """
-    return build_mcp_server(queries, ImpactService(Manifest(tmp_path / "manifest.sqlite3")))
+    manifest = Manifest(tmp_path / "manifest.sqlite3")
+    return build_mcp_server(
+        queries,
+        ImpactService(manifest),
+        GroundingService(CoverageService(manifest)),
+    )
 
 
 async def test_every_tool_is_registered(server: MCPServer) -> None:
@@ -266,3 +273,22 @@ def _stub_context(store: QdrantStore, tmp_path: Path) -> AppContext:
             settings=Settings(state_db=tmp_path / "manifest.sqlite3"),
         ),
     )
+
+
+async def test_grounding_tool_answers_over_the_real_server(server: MCPServer) -> None:
+    """Registered, dispatchable, and shaped as the agent will receive it."""
+    payload = _payload(await server.call_tool("grounding", {}))
+
+    assert "repositories" in payload
+    assert "note" in payload
+
+
+async def test_grounding_rejects_an_unknown_repository_with_a_usable_message(
+    server: MCPServer,
+) -> None:
+    """An empty result here would read as "this repository records no reasons"
+    -- the strongest claim the tool can make, manufactured out of a typo."""
+    with pytest.raises(ToolError) as caught:
+        await server.call_tool("grounding", {"repo": "no-such-repo"})
+
+    assert "no-such-repo" in str(caught.value)
