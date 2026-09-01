@@ -662,6 +662,7 @@ def serve(config: ConfigOption = None) -> None:
     """
     from workspace_indexer.mcp import (
         EmptyIndexError,
+        build_grounding_service,
         build_impact_service,
         build_mcp_server,
         build_query_service,
@@ -677,7 +678,11 @@ def serve(config: ConfigOption = None) -> None:
         raise typer.Exit(code=2) from exc
 
     try:
-        build_mcp_server(build_query_service(ctx), build_impact_service(ctx)).run()
+        build_mcp_server(
+            build_query_service(ctx),
+            build_impact_service(ctx),
+            build_grounding_service(ctx),
+        ).run()
     finally:
         asyncio.run(ctx.close())
 

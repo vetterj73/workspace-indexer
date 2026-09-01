@@ -16,8 +16,11 @@ from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
 from workspace_indexer.app_context import AppContext
+from workspace_indexer.grounding import CoverageService
 from workspace_indexer.mcp.document_type_resolver import DocumentTypeResolver
 from workspace_indexer.mcp.empty_index_error import EmptyIndexError
+from workspace_indexer.mcp.grounding_report import GroundingReport
+from workspace_indexer.mcp.grounding_service import GroundingService
 from workspace_indexer.mcp.impact_report import ImpactReport
 from workspace_indexer.mcp.impact_service import ImpactService
 from workspace_indexer.mcp.query_service import QueryService
@@ -26,6 +29,7 @@ from workspace_indexer.mcp.taxonomy import Taxonomy
 from workspace_indexer.mcp.taxonomy_service import TaxonomyService
 from workspace_indexer.mcp.tool_call_recorder import ToolCallRecorder
 from workspace_indexer.mcp.unknown_document_type_error import UnknownDocumentTypeError
+from workspace_indexer.mcp.unknown_repository_error import UnknownRepositoryError
 from workspace_indexer.models import DocumentType
 
 TAXONOMY_URI = "workspace-indexer://taxonomy"
@@ -47,6 +51,11 @@ you know *what* you want but not *where* it is.
   with counts. A count of zero is a real answer: it means look at the code.
 - impact_of -- what one file imports and, more usefully, what imports it.
   Call this before changing a signature, and before deleting anything.
+- grounding -- whether a repository records *why* it is the way it is. Call
+  this when find_guidance comes back empty, before concluding anything from
+  that emptiness: it says whether the answer is missing from the index or was
+  never written down. Where it reports `absent`, say the rationale is
+  unrecorded rather than inferring one.
 
 Document types: {_TYPE_LIST}.
 """
@@ -54,6 +63,10 @@ Document types: {_TYPE_LIST}.
 
 def build_impact_service(ctx: AppContext) -> ImpactService:
     return ImpactService(ctx.manifest, recorder=ToolCallRecorder(ctx.manifest))
+
+
+def build_grounding_service(ctx: AppContext) -> GroundingService:
+    return GroundingService(CoverageService(ctx.manifest), recorder=ToolCallRecorder(ctx.manifest))
 
 
 def build_query_service(ctx: AppContext) -> QueryService:
@@ -68,17 +81,19 @@ def build_query_service(ctx: AppContext) -> QueryService:
     )
 
 
-def build_mcp_server(queries: QueryService, impact: ImpactService) -> MCPServer:
+def build_mcp_server(
+    queries: QueryService, impact: ImpactService, grounding_service: GroundingService
+) -> MCPServer:
     """Wrap the services in the protocol.
 
     Takes the services rather than the AppContext so a test can build the real
     server -- real tool schemas, real dispatch -- over a store it seeded
     itself, without constructing every layer of the application.
 
-    `impact` is required rather than defaulted to None. A tool that exists only
-    when someone remembered to wire it is worse than no tool: the agent cannot
-    tell a missing capability from a negative answer, and neither can the
-    person reading the code.
+    `impact` and `grounding_service` are required rather than defaulted to
+    None. A tool that exists only when someone remembered to wire it is worse
+    than no tool: the agent cannot tell a missing capability from a negative
+    answer, and neither can the person reading the code.
     """
     resolver = DocumentTypeResolver()
     server = MCPServer(name="workspace-indexer", instructions=_INSTRUCTIONS)
@@ -190,6 +205,51 @@ def build_mcp_server(queries: QueryService, impact: ImpactService) -> MCPServer:
         of which means nothing depends on it.
         """
         return impact.impact_of(rel_path, limit=limit)
+
+    # The suppression below is not decoration, and it is not understood. Every
+    # tool above is registered by decorator and never called by name, exactly
+    # like this one, and pyright reports none of them. Verified by experiment:
+    # a byte-identical clone of `list_document_types` added to this file *is*
+    # reported, and renaming `list_document_types` itself makes it reported
+    # too -- so the exemption tracks the name, not the shape or the position.
+    # What earns a name the exemption, I could not establish; the obvious
+    # candidates (the name appearing in _INSTRUCTIONS, elsewhere in src/, or in
+    # a test's call_tool string) are all true of `grounding` as well.
+    # Narrowed to the one rule rather than silenced, and left with this note so
+    # the next person starts from what has already been ruled out.
+    @server.tool()
+    async def grounding(  # pyright: ignore[reportUnusedFunction]
+        repo: Annotated[
+            str | None,
+            Field(description="Restrict to one repository, as named in a search result."),
+        ] = None,
+    ) -> GroundingReport:
+        """Whether a repository records *why* it is the way it is.
+
+        Call this when find_guidance returns nothing, before concluding
+        anything from that. An empty search has two causes -- the index missed
+        it, or nobody wrote it down -- and they call for opposite next moves.
+        Nothing else here can tell them apart.
+
+        Reports four sources per repository (design docs, normative docs,
+        commit rationale, and WHY:/DECISION: markers), each `absent`, `thin` or
+        `present`. Where the verdict is `absent`, the reason genuinely was not
+        recorded: read the implementation, and say the rationale is unrecorded
+        rather than inferring a plausible one.
+
+        Read `notes`. They carry the findings that change what to do -- most
+        importantly that a repository's reasons live in an issue tracker this
+        index cannot read, which turns "no rationale" into "wrong system".
+
+        An unrecognised repo is an error naming the indexed ones, never an
+        empty result, because empty here reads as "records no reasons".
+        """
+        try:
+            return grounding_service.grounding(repo)
+        except UnknownRepositoryError as exc:
+            # Same boundary conversion as find_guidance: only a ToolError
+            # carries its message to the model.
+            raise ToolError(str(exc)) from exc
 
     @server.resource(
         TAXONOMY_URI,
