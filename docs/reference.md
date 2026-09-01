@@ -477,6 +477,47 @@ which turns "no rationale" into "wrong system".
 An unrecognised `repo` is an error naming the indexed ones, never an empty
 result — empty here reads as "records no reasons", the strongest claim the
 tool can make, and a typo must not manufacture it.
+#### Working in a worktree
+
+`search_code`, `find_guidance` and `get_file_context` take an optional
+`worktree`. **It is required only once a repository actually has worktrees** —
+a workspace that has never run `git worktree add` never sees the parameter, the
+error, or the cost.
+
+| `worktree` | behaviour |
+|---|---|
+| omitted, no worktrees exist | normal search |
+| omitted, worktrees exist | **error** listing them and offering `"none"` |
+| `"none"` | main checkout; every worktree ignored |
+| a name or absolute path | that worktree only |
+
+The refusal is deliberate, because neither default is safe. Answering from the
+index serves a developer working in a worktree the wrong checkout, silently.
+Reporting divergence across *all* worktrees flags a file because some other
+agent is mid-edit on a branch this caller has never heard of — and abandoned
+branches make that noise permanent, so the flag stops being read. One round
+trip, once per session, is the same trade `find_guidance` makes for an
+unrecognised document type.
+
+When scoped, hits the worktree has changed are marked `stale`, and **every**
+hit's `abs_path` points at that worktree's copy — changed or not — so the agent
+can always open the path it was handed without working out which checkout it is
+in. Divergence is measured against the *main checkout's* HEAD, so a change the
+agent has already committed in its worktree still counts.
+
+`abs_path` is on every result, not only scoped ones (~190 tokens per 8-hit
+response). `rel_path` remains the index's name for the file and is unchanged by
+scoping — it has to mean the same thing whoever is asking.
+
+**The limit worth knowing:** this reports that a file differs, never what it
+now says. The index holds the main checkout's text, so a file heavily rewritten
+in a worktree returns its *old* content with a flag, and a file **created** in
+a worktree has no hit to flag at all. Search is a pointer for code you are
+actively editing, not a source.
+
+`list_document_types`, `grounding` and `impact_of` take no `worktree`: the
+first two answer about the index and the repository rather than about a working
+copy, and taxing every graph query with a checkout question buys nothing.
 
 ### Resource
 

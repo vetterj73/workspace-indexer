@@ -10,6 +10,13 @@ class SearchResult(BaseModel):
     # nothing to work out. The single most valuable field here.
     location: str
     rel_path: str
+    # The file to open, absolute. `location` and `rel_path` identify the chunk
+    # within the index; this is where it lives on the caller's disk, and when a
+    # query is scoped to a worktree it is that worktree's copy rather than the
+    # main checkout's. Carried as its own field rather than by rewriting
+    # rel_path, which is the index's name for the file and has to keep meaning
+    # the same thing whoever is asking.
+    abs_path: str = ""
     start_line: int
     end_line: int
     doc_type: str

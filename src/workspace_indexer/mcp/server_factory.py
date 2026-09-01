@@ -31,6 +31,11 @@ from workspace_indexer.mcp.tool_call_recorder import ToolCallRecorder
 from workspace_indexer.mcp.unknown_document_type_error import UnknownDocumentTypeError
 from workspace_indexer.mcp.unknown_repository_error import UnknownRepositoryError
 from workspace_indexer.models import DocumentType
+from workspace_indexer.worktrees import (
+    WorktreeChoiceError,
+    WorktreeGate,
+    WorktreeRegistry,
+)
 
 TAXONOMY_URI = "workspace-indexer://taxonomy"
 
@@ -74,6 +79,7 @@ def build_query_service(ctx: AppContext) -> QueryService:
         search=ctx.search_service(),
         taxonomy=TaxonomyService(ctx.store, ctx.space),
         check_staleness=ctx.config.search.check_staleness,
+        worktrees=WorktreeGate(WorktreeRegistry(ctx.manifest)),
         # The manifest is the harvesting sink: finding the calls that returned
         # nothing is a query rather than a log scrape, and those calls are eval
         # cases waiting to be written.
@@ -112,6 +118,14 @@ def build_mcp_server(
         include_tests: Annotated[
             bool, Field(description="Include tests and generated files.")
         ] = False,
+        worktree: Annotated[
+            str | None,
+            Field(
+                description="Which checkout you are working in: a worktree name or "
+                'path, or "none" for the main checkout. Required only when the '
+                "repository has worktrees."
+            ),
+        ] = None,
     ) -> SearchResponse:
         """Search implementation code and documentation by meaning.
 
@@ -119,14 +133,18 @@ def build_mcp_server(
         because a test naming a symbol twenty times otherwise outranks the one
         file that defines it. Every result is anchored as path:start-end.
         """
-        return await queries.search_code(
-            query,
-            limit=limit,
-            repo=repo,
-            language=language,
-            path_prefix=path_prefix,
-            include_tests=include_tests,
-        )
+        try:
+            return await queries.search_code(
+                query,
+                limit=limit,
+                repo=repo,
+                language=language,
+                path_prefix=path_prefix,
+                include_tests=include_tests,
+                worktree=worktree,
+            )
+        except WorktreeChoiceError as exc:
+            raise ToolError(str(exc)) from exc
 
     @server.tool()
     async def find_guidance(
@@ -136,6 +154,14 @@ def build_mcp_server(
         doc_type: Annotated[
             str | None,
             Field(description=f"Narrow to one type. One of: {_TYPE_LIST}."),
+        ] = None,
+        worktree: Annotated[
+            str | None,
+            Field(
+                description="Which checkout you are working in: a worktree name or "
+                'path, or "none" for the main checkout. Required only when the '
+                "repository has worktrees."
+            ),
         ] = None,
     ) -> SearchResponse:
         """Find the specs, conventions and design documents governing a topic.
@@ -157,7 +183,12 @@ def build_mcp_server(
             # unactionable failure this whole design is built to avoid. Only a
             # ToolError carries its message through to the agent.
             raise ToolError(str(exc)) from exc
-        return await queries.find_guidance(query, limit=limit, repo=repo, doc_type=selected)
+        try:
+            return await queries.find_guidance(
+                query, limit=limit, repo=repo, doc_type=selected, worktree=worktree
+            )
+        except WorktreeChoiceError as exc:
+            raise ToolError(str(exc)) from exc
 
     @server.tool()
     async def get_file_context(
@@ -165,13 +196,24 @@ def build_mcp_server(
             str, Field(description="Path from a search result, or a trailing portion of one.")
         ],
         limit: Annotated[int, Field(description="Maximum chunks.", ge=1, le=100)] = 20,
+        worktree: Annotated[
+            str | None,
+            Field(
+                description="Which checkout you are working in: a worktree name or "
+                'path, or "none" for the main checkout. Required only when the '
+                "repository has worktrees."
+            ),
+        ] = None,
     ) -> SearchResponse:
         """Return every indexed chunk of one file, in file order.
 
         Use this to expand around a hit: the search returns the matching
         function, this returns the rest of the file as it was indexed.
         """
-        return await queries.get_file_context(rel_path, limit=limit)
+        try:
+            return await queries.get_file_context(rel_path, limit=limit, worktree=worktree)
+        except WorktreeChoiceError as exc:
+            raise ToolError(str(exc)) from exc
 
     @server.tool()
     async def list_document_types() -> Taxonomy:
