@@ -65,6 +65,45 @@ coverage per language. Reports `inconsistent` when the manifest and the store
 disagree about how many chunks exist — usually a store rebuilt without the
 manifest, which `index --force` fixes.
 
+### `grounding`
+
+Per repository, whether the index can answer **why** the code is the way it is.
+Measures four sources — design docs, normative docs, commit rationale, and
+`WHY:`/`DECISION:`/`HACK:` markers in tracked code — and grades each `absent`,
+`thin` or `present`.
+
+The verdict is the *best* source, not the average: thorough design documents
+answer "why" whether or not the commits also do.
+
+Reads what is **indexed**, not what is on disk, because the question it answers
+is whether an empty search result means "not written down" or "not retrieved".
+Commit and marker evidence comes from `git log` and `git grep` on the
+repository each file actually belongs to — resolved from git rather than from
+the path, since a root can hold a repository nested below it and loose files
+above that repository. A unit in no repository reports those sources as
+unavailable rather than as zero.
+
+Three findings are called out separately because they change what to do next:
+
+- **Commits cite tickets but state no reasons** — the rationale exists, in an
+  issue tracker this index does not read. The fix is an integration, not better
+  commit discipline.
+- **Most commit subjects were written by a merge tool** — history that looks
+  full by any length-based measure and reads as nothing.
+- **The indexed files are no longer at their recorded paths** — said alone,
+  replacing every other finding for that repository. An unreadable path and an
+  undocumented repository look identical to git and mean opposite things: the
+  first is a fact about the index, and it invalidates the row. Reindex first.
+
+Where every source is `absent`, the report says so plainly: generated prose
+would be invention rather than retrieval, and it would sit in the same
+collection as the real architecture docs, indistinguishable from them.
+
+Thresholds are judgment calls, stated in the output so they can be argued with:
+one document per hundred code files, 15% of commits carrying a stated reason,
+and at least 20 commits before a share counts as a habit. All three are pinned
+by tests.
+
 ### `explain PATH`
 
 Dump the chunks one file produces, with symbols and line ranges. The

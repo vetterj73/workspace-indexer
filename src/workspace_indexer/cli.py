@@ -30,6 +30,7 @@ from workspace_indexer.evaluation import (
 )
 from workspace_indexer.evaluation.search_retriever import Fusion
 from workspace_indexer.graph import SUPPORTED as IMPORT_LANGUAGES
+from workspace_indexer.grounding import CoverageService, SourceStrength, UnitCoverage
 from workspace_indexer.mcp import QueryService, TaxonomyService
 from workspace_indexer.models import EmbeddingSpace, FileKind, RunStats, SearchFilters
 from workspace_indexer.search import Reprojector, SearchRequest
@@ -247,6 +248,67 @@ def status(config: ConfigOption = None) -> None:
             await ctx.close()
 
     asyncio.run(run())
+
+
+@app.command()
+def grounding(config: ConfigOption = None) -> None:
+    """Which repositories can explain why they are the way they are."""
+
+    ctx = _context(config)
+    try:
+        units = CoverageService(ctx.manifest).coverage()
+    finally:
+        ctx.manifest.close()
+
+    if not units:
+        console.print("[yellow]nothing indexed yet; run `index` first[/yellow]")
+        return
+
+    for unit in units:
+        console.print(_grounding_table(unit))
+        for note in unit.notes:
+            console.print(f"  [yellow]![/yellow] {note}")
+        console.print()
+
+    console.print(
+        "Coverage is measured against what is indexed, not what is on disk. A source "
+        "marked [red]absent[/red] cannot be retrieved from -- an empty answer there is "
+        "the codebase's, not the index's."
+    )
+
+
+_STRENGTH_COLOUR = {
+    SourceStrength.ABSENT: "red",
+    SourceStrength.THIN: "yellow",
+    SourceStrength.PRESENT: "green",
+}
+
+
+def _grounding_table(unit: UnitCoverage) -> Table:
+    colour = _STRENGTH_COLOUR[unit.verdict]
+    table = Table(
+        title=f'{unit.label} \u2014 can answer "why": [{colour}]{unit.verdict.value}[/{colour}]'
+    )
+    table.add_column("source")
+    table.add_column("found", justify="right")
+    table.add_column("rate", justify="right")
+    table.add_column("strength")
+    table.add_column("what it is")
+    for source in unit.sources:
+        shade = _STRENGTH_COLOUR[source.strength]
+        rate = (
+            f"{source.share:.0%} of {source.population:,}"
+            if source.population_unit == "commits"
+            else f"{source.per_100:.1f} / 100 files"
+        )
+        table.add_row(
+            source.name,
+            f"{source.found:,}",
+            rate,
+            f"[{shade}]{source.strength.value}[/{shade}]",
+            source.detail,
+        )
+    return table
 
 
 @app.command()
