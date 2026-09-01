@@ -35,6 +35,14 @@ def _clean_logging() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction]
 
 
 def _read(path: Path) -> list[dict[str, Any]]:
+    """Lines written, treating a missing file as none.
+
+    The handler opens its file on first write, so "nothing was logged" and "no
+    file exists" are the same statement -- and a test asserting the first
+    should not fail on the second.
+    """
+    if not path.exists():
+        return []
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 

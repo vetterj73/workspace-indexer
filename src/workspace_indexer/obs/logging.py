@@ -71,8 +71,24 @@ def _shared_processors() -> list[Any]:
     ]
 
 
-def configure_logging(cfg: LoggingConfig) -> None:
-    """Install the console and file sinks. Idempotent."""
+def configure_logging(cfg: LoggingConfig, role: str | None = None) -> None:
+    """Install the console and file sinks. Idempotent.
+
+    `role` names the command doing the logging, and lands in the file name:
+    `workspace-indexer.jsonl` becomes `workspace-indexer-serve.jsonl`. Two
+    processes must not share a rotating file. `RotatingFileHandler` *renames*
+    the live file on rollover, and Windows refuses to rename a file another
+    process holds open -- so a long-running `serve` and a `watch`, or `serve`
+    and any reindex, collide with WinError 32 and one of them dies.
+
+    POSIX permits renaming an open file, so this never surfaces on Linux: the
+    orphaned handle keeps writing to an inode nobody can find. Silently losing
+    the log is the better of the two failures and still not one worth having.
+
+    Separating them also makes both readable. A full reindex would otherwise
+    bury a session's worth of MCP queries, which is the half you want when a
+    search misbehaves.
+    """
     global _configured
     if _configured:
         return
@@ -98,7 +114,7 @@ def configure_logging(cfg: LoggingConfig) -> None:
     if cfg.console != "off":
         root.addHandler(_console_handler(cfg, shared))
     if cfg.file is not None:
-        root.addHandler(_file_handler(cfg, shared))
+        root.addHandler(_file_handler(cfg, shared, role))
 
     for name in _NOISY:
         logging.getLogger(name).setLevel(logging.WARNING)
@@ -130,9 +146,22 @@ def _console_handler(cfg: LoggingConfig, shared: list[Any]) -> logging.Handler:
     return handler
 
 
-def _file_handler(cfg: LoggingConfig, shared: list[Any]) -> logging.Handler:
+def _for_role(path: Path, role: str | None) -> Path:
+    """`logs/x.jsonl` and role `serve` -> `logs/x-serve.jsonl`.
+
+    Suffix rather than a subdirectory, so the files sit together and sort
+    together: reading one run usually means reading the two beside it.
+    """
+    if not role:
+        return path
+    return path.with_name(f"{path.stem}-{role}{path.suffix}")
+
+
+def _file_handler(
+    cfg: LoggingConfig, shared: list[Any], role: str | None = None
+) -> logging.Handler:
     assert cfg.file is not None
-    path = Path(cfg.file.path).expanduser()
+    path = _for_role(Path(cfg.file.path).expanduser(), role)
     path.parent.mkdir(parents=True, exist_ok=True)
     # Size-based rather than time-based rotation: indexer output is bursty. A
     # full reindex writes everything in minutes then goes quiet for days, so
@@ -142,6 +171,10 @@ def _file_handler(cfg: LoggingConfig, shared: list[Any]) -> logging.Handler:
         maxBytes=cfg.file.max_bytes,
         backupCount=cfg.file.backup_count,
         encoding="utf-8",
+        # Opened on first write rather than at startup, so a command that
+        # logs nothing leaves no empty file behind -- and so a config-only
+        # failure does not create one before it aborts.
+        delay=True,
     )
     handler.setLevel(logging.DEBUG)
     handler.setFormatter(

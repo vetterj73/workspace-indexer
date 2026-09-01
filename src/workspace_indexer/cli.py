@@ -46,9 +46,15 @@ console = Console()
 ConfigOption = Annotated[Path | None, typer.Option("--config", "-c", help="Path to workspace.yaml")]
 
 
-def _context(config: Path | None) -> AppContext:
+def _context(config: Path | None, role: str | None = None) -> AppContext:
+    """`role` is the command's own name, and keeps its log file separate.
+
+    Passed explicitly by each command rather than sniffed from sys.argv: a
+    lookup that works and cannot be traced from the call site is worse than a
+    parameter, and this one is read in a traceback more often than written.
+    """
     try:
-        return AppContext.build(config)
+        return AppContext.build(config, role)
     except ConfigError as exc:
         # A config problem is a user problem, not a traceback.
         console.print(f"[red]{exc}[/red]")
@@ -80,7 +86,7 @@ def index(
     """
 
     async def run() -> None:
-        ctx = _context(config)
+        ctx = _context(config, "index")
         try:
             stats = await ctx.indexer().run(
                 only_root=root, force=force, dry_run=dry_run, allow_deletes=allow_deletes
@@ -135,7 +141,7 @@ def search(
     """Search the index."""
 
     async def run() -> None:
-        ctx = _context(config)
+        ctx = _context(config, "search")
         try:
             hits = await ctx.search_service().search(
                 SearchRequest(
@@ -177,7 +183,7 @@ def status(config: ConfigOption = None) -> None:
     """What is indexed, in which spaces, and what recent runs cost."""
 
     async def run() -> None:
-        ctx = _context(config)
+        ctx = _context(config, "status")
         try:
             roots = Table(title="files by root")
             roots.add_column("root")
@@ -254,7 +260,7 @@ def status(config: ConfigOption = None) -> None:
 def grounding(config: ConfigOption = None) -> None:
     """Which repositories can explain why they are the way they are."""
 
-    ctx = _context(config)
+    ctx = _context(config, "grounding")
     try:
         units = CoverageService(ctx.manifest).coverage()
     finally:
@@ -320,7 +326,7 @@ def explain(
     from workspace_indexer.chunking import read_source
     from workspace_indexer.discovery import Walker
 
-    ctx = _context(config)
+    ctx = _context(config, "explain")
     try:
         target = path.expanduser().resolve()
         candidate = next(
@@ -407,7 +413,7 @@ def mirror(
     """
 
     async def run() -> None:
-        ctx = _context(config)
+        ctx = _context(config, "mirror")
         target_settings = ctx.settings.model_copy(update={"vector_store": to})
         if target_settings.vector_store == ctx.settings.vector_store:
             console.print(
@@ -459,7 +465,7 @@ def reproject(
     """Derive a narrower collection by Matryoshka truncation. No re-embedding."""
 
     async def run() -> None:
-        ctx = _context(config)
+        ctx = _context(config, "reproject")
         try:
             target = await Reprojector(ctx.store, ctx.manifest).reproject(ctx.space, dimensions)
             console.print(
@@ -506,7 +512,7 @@ def evaluate(
     """
 
     async def run() -> None:
-        ctx = _context(config)
+        ctx = _context(config, "eval")
         try:
             cases = load_cases(dataset or ctx.config.eval.dataset)
             if group != "all":
@@ -669,7 +675,7 @@ def serve(config: ConfigOption = None) -> None:
     )
     from workspace_indexer.mcp.server_factory import preflight
 
-    ctx = _context(config)
+    ctx = _context(config, "serve")
     try:
         asyncio.run(preflight(ctx))
     except EmptyIndexError as exc:
@@ -704,7 +710,7 @@ def watch(config: ConfigOption = None) -> None:
         )
         raise typer.Exit(code=2) from exc
 
-    ctx = _context(config)
+    ctx = _context(config, "watch")
     resolved = config or DEFAULT_CONFIG_PATH
 
     async def run() -> None:

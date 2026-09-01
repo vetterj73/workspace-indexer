@@ -68,3 +68,51 @@ def test_typo_in_a_key_is_an_error_not_a_silent_default(tmp_path: Path) -> None:
     path.write_text(VALID + "\nindex:\n  respect_gitgnore: true\n", encoding="utf-8")
     with pytest.raises(ConfigError, match="respect_gitgnore"):
         load_workspace_config(path)
+
+
+def test_a_repeated_key_is_rejected_rather_than_silently_discarded(tmp_path: Path) -> None:
+    """YAML keeps the last of two identical keys and says nothing.
+
+    So an edited block -- and every comment in it -- can have no effect at all,
+    with no symptom: the file parses and the program runs on a setting its
+    author is not reading. Found in a real config where a `file:` section was
+    duplicated and the annotated half was dead text.
+    """
+    path = tmp_path / "workspace.yaml"
+    path.write_text(
+        "workspace:\n"
+        "  name: t\n"
+        "  roots: [{path: /tmp}]\n"
+        "logging:\n"
+        "  file: {path: FIRST}\n"
+        "  level: INFO\n"
+        "  file: {path: SECOND}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError) as caught:
+        load_workspace_config(path)
+
+    message = str(caught.value)
+    assert "duplicate key 'file'" in message
+    # The line number matters: a config can repeat a key hundreds of lines apart.
+    assert "line 7" in message
+
+
+def test_the_same_key_in_different_mappings_is_fine(tmp_path: Path) -> None:
+    """`path` appears under several sections, and always will."""
+    path = tmp_path / "workspace.yaml"
+    path.write_text(
+        "workspace:\n"
+        "  name: t\n"
+        "  roots:\n"
+        "    - {path: /tmp}\n"
+        "    - {path: /var}\n"
+        "logging:\n"
+        "  file: {path: x.jsonl}\n",
+        encoding="utf-8",
+    )
+
+    config = load_workspace_config(path)
+
+    assert len(config.workspace.roots) == 2
