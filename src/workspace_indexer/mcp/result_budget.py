@@ -74,6 +74,7 @@ def _to_result(hit: SearchHit) -> SearchResult:
     return SearchResult(
         location=hit.location,
         rel_path=hit.rel_path,
+        abs_path=hit.abs_path,
         start_line=hit.start_line,
         end_line=hit.end_line,
         doc_type=hit.doc_type.value,

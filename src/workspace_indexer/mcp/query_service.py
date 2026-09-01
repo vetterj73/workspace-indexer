@@ -20,6 +20,7 @@ from workspace_indexer.models import DocumentType, SearchFilters, SearchHit, Too
 from workspace_indexer.obs.logging import get_logger
 from workspace_indexer.search.search_request import SearchRequest
 from workspace_indexer.search.search_service import SearchService
+from workspace_indexer.worktrees import WorktreeGate
 
 log = get_logger("workspace_indexer.mcp")
 
@@ -48,12 +49,17 @@ class QueryService:
         taxonomy: TaxonomyService,
         max_response_tokens: int = 6000,
         check_staleness: bool = True,
+        worktrees: WorktreeGate | None = None,
         recorder: ToolCallRecorder | None = None,
     ) -> None:
         self._search = search
         self._taxonomy = taxonomy
         self._budget = ResultBudget(max_response_tokens)
         self._check_staleness = check_staleness
+        # Absent where no manifest is available -- a search then behaves as it
+        # always has, which is correct for a workspace with no worktrees and
+        # the only honest option where they cannot be enumerated.
+        self._worktrees = worktrees
         # Absent is a normal configuration: the tools work without a record,
         # they just cannot be evaluated afterwards.
         self._recorder = recorder or ToolCallRecorder()
@@ -67,7 +73,12 @@ class QueryService:
         language: str | None = None,
         path_prefix: str | None = None,
         include_tests: bool = False,
+        worktree: str | None = None,
     ) -> SearchResponse:
+        # Before the search, not after: the choice cannot change what matches,
+        # and refusing early costs the caller nothing but a round trip while
+        # refusing late costs an embedding call as well.
+        scope = self._worktrees.scope(worktree) if self._worktrees else None
         filters = SearchFilters(
             repo_name=repo,
             language=language,
@@ -76,6 +87,8 @@ class QueryService:
         )
         started = time.monotonic()
         hits = await self._run(query, filters, limit)
+        if self._worktrees:
+            hits = self._worktrees.apply(hits, scope)
         return self._respond(
             "search_code",
             started,
@@ -97,6 +110,7 @@ class QueryService:
         limit: int = 8,
         repo: str | None = None,
         doc_type: DocumentType | None = None,
+        worktree: str | None = None,
     ) -> SearchResponse:
         """Specs and design documents only.
 
@@ -104,12 +118,15 @@ class QueryService:
         existing code to imitate, so what it needs is the rules, and a plain
         semantic search hands it the nearest *paragraph* instead.
         """
+        scope = self._worktrees.scope(worktree) if self._worktrees else None
         filters = SearchFilters(
             repo_name=repo,
             doc_types=[doc_type] if doc_type else GUIDANCE_TYPES,
         )
         started = time.monotonic()
         hits = await self._run(query, filters, limit)
+        if self._worktrees:
+            hits = self._worktrees.apply(hits, scope)
         wanted = doc_type.value if doc_type else " or ".join(t.value for t in GUIDANCE_TYPES)
         return self._respond(
             "find_guidance",
@@ -124,16 +141,21 @@ class QueryService:
             ),
         )
 
-    async def get_file_context(self, rel_path: str, *, limit: int = 20) -> SearchResponse:
+    async def get_file_context(
+        self, rel_path: str, *, limit: int = 20, worktree: str | None = None
+    ) -> SearchResponse:
         """Every indexed chunk of one file, in file order.
 
         Not a search: an agent that has a hit and wants the surrounding code
         should not have to guess a query that retrieves its neighbours.
         """
+        scope = self._worktrees.scope(worktree) if self._worktrees else None
         started = time.monotonic()
         hits = await self._search.chunks_for_path(
             rel_path, limit=limit, check_staleness=self._check_staleness
         )
+        if self._worktrees:
+            hits = self._worktrees.apply(hits, scope)
         hits.sort(key=lambda h: (h.rel_path, h.start_line))
         results, dropped = self._budget.pack(hits)
         response = SearchResponse(

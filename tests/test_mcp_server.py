@@ -292,3 +292,26 @@ async def test_grounding_rejects_an_unknown_repository_with_a_usable_message(
         await server.call_tool("grounding", {"repo": "no-such-repo"})
 
     assert "no-such-repo" in str(caught.value)
+
+
+async def test_the_content_tools_take_a_worktree(server: MCPServer) -> None:
+    """Present on all three, absent from the checkout-agnostic ones.
+
+    `grounding` and `list_document_types` answer about a repository rather than
+    a working copy, and `impact_of` reads edges the index already resolved --
+    making those ask for a checkout would tax every graph query for nothing.
+    """
+    tools = {t.name: t for t in await server.list_tools()}
+    guarded = {"search_code", "find_guidance", "get_file_context"}
+
+    for name in guarded:
+        assert "worktree" in tools[name].input_schema["properties"], name
+    for name in set(tools) - guarded:
+        assert "worktree" not in tools[name].input_schema.get("properties", {}), name
+
+
+async def test_a_workspace_without_worktrees_needs_no_choice(server: MCPServer) -> None:
+    """The guard must stay invisible where it does not apply."""
+    result = await server.call_tool("search_code", {"query": "store", "limit": 3})
+
+    assert not getattr(result, "isError", False)
