@@ -42,6 +42,36 @@ def is_repo(root: Path) -> bool:
     return _git(root, "rev-parse", "--git-dir") is not None
 
 
+def is_linked_worktree(path: Path) -> bool:
+    """Is `path` the root of a `git worktree add` checkout?
+
+    Linked worktrees hold the same files as their main checkout at different
+    paths, so indexing one duplicates a repository: two copies of every chunk
+    competing in search, and -- worse, because it is silent -- route resolution
+    finding two files for one endpoint and resolving to neither.
+
+    Cheap by construction, because this is asked of every directory descended
+    into. A worktree's `.git` is a *file* rather than a directory, so a missing
+    or directory `.git` answers no without running git at all; only the handful
+    of directories that could be one cost a subprocess.
+
+    That file test is necessary but not sufficient: a submodule's `.git` is a
+    file too, and excluding vendored submodule code would be a real loss. The
+    distinguishing fact is that a worktree borrows its repository's object
+    store, so its git-dir sits inside the common dir rather than being it --
+    verified against a real worktree and a real submodule, because the
+    tempting shorter test gets submodules wrong.
+    """
+    marker = path / ".git"
+    if not marker.is_file():
+        return False
+    git_dir = _git(path, "rev-parse", "--git-dir")
+    common = _git(path, "rev-parse", "--git-common-dir")
+    if git_dir is None or common is None:
+        return False
+    return Path(git_dir).resolve() != Path(common).resolve()
+
+
 def repo_root(path: Path) -> Path | None:
     """The repository `path` belongs to, or None if it is not in one.
 

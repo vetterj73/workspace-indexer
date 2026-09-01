@@ -19,7 +19,7 @@ from pathlib import Path
 from workspace_indexer.config import RootConfig, WorkspaceConfig
 from workspace_indexer.discovery.classify import classify, is_lockfile
 from workspace_indexer.discovery.file_candidate import FileCandidate
-from workspace_indexer.discovery.git_metadata import read_repo_info
+from workspace_indexer.discovery.git_metadata import is_linked_worktree, read_repo_info
 from workspace_indexer.discovery.ignore_matcher import IgnoreMatcher
 from workspace_indexer.discovery.skip_reason import SkipReason
 from workspace_indexer.models import RepoInfo
@@ -106,6 +106,21 @@ class Walker:
                     if prune is not None:
                         self.pruned_dirs[prune.value] += 1
                         log.debug("discovery.prune", reason=prune.value, path=str(path))
+                        continue
+                    # Only reached for directories *discovered* under a root --
+                    # the root itself is pushed straight onto the stack and
+                    # never passes here. That is the escape hatch: a worktree
+                    # someone deliberately configures as a root is indexed
+                    # normally, while one that merely turns up beside its
+                    # repository is not. Explicit beats inferred.
+                    if is_linked_worktree(path):
+                        self.pruned_dirs[SkipReason.WORKTREE.value] += 1
+                        log.info(
+                            "discovery.worktree_skipped",
+                            path=str(path),
+                            detail="a linked worktree holds a second copy of a repository "
+                            "already indexed; add it as its own root to index it anyway",
+                        )
                         continue
                     stack.append(path)
                     continue
