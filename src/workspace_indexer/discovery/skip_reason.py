@@ -14,6 +14,8 @@ class SkipReason(StrEnum):
     EXCLUDED = "excluded"
     TOO_LARGE = "too_large"
     SYMLINK = "symlink"
+    # A `git worktree add` checkout: the same repository at a second path.
+    WORKTREE = "worktree"
     LOCKFILE = "lockfile"
     UNREADABLE = "unreadable"
     BINARY = "binary"

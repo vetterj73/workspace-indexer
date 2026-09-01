@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from workspace_indexer.config import WorkspaceConfig
+from workspace_indexer.discovery.git_metadata import is_linked_worktree
 from workspace_indexer.discovery.ignore_matcher import IgnoreMatcher
 from workspace_indexer.obs.logging import get_logger
 
@@ -42,6 +43,10 @@ class ChangeDebouncer:
         }
         self._pending: set[str] = set()
         self._config_changed = False
+        # Memoised per directory: a save storm in one worktree asks the same
+        # question thousands of times, and the answer cannot change while the
+        # watcher runs without the worktree itself being added or removed.
+        self._in_worktree: dict[Path, bool] = {}
 
     def add(self, path: Path) -> bool:
         """Record a change. Returns whether it was worth recording.
@@ -66,8 +71,53 @@ class ChangeDebouncer:
             log.debug("watch.ignored", path=rel, root=label)
             return False
 
+        if self._inside_a_worktree(resolved.parent, label):
+            # The walk would prune this anyway, so reindexing the root on its
+            # account is pure cost -- and it is cost paid per save, by agents
+            # whose whole working pattern is saving into a worktree. Without
+            # this, one agent editing in a worktree makes the watcher re-walk
+            # the entire root, repeatedly, to discover nothing.
+            log.debug("watch.worktree_ignored", path=rel, root=label)
+            return False
+
         self._pending.add(label)
         return True
+
+    def _inside_a_worktree(self, directory: Path, label: str) -> bool:
+        """Is `directory` at or below the root of a linked worktree?
+
+        Walks up rather than testing only the directory itself: the change is a
+        file somewhere inside the worktree, and only its top carries the `.git`
+        that identifies it. Stops at the configured root, so the search is
+        bounded by the workspace rather than by the filesystem.
+        """
+        base = self._base_of(label)
+        seen: list[Path] = []
+        current = directory
+        while True:
+            if current in self._in_worktree:
+                answer = self._in_worktree[current]
+                break
+            seen.append(current)
+            if base is not None and current == base:
+                answer = False
+                break
+            if is_linked_worktree(current):
+                answer = True
+                break
+            if current.parent == current or (base is not None and base not in current.parents):
+                answer = False
+                break
+            current = current.parent
+        for path in seen:
+            self._in_worktree[path] = answer
+        return answer
+
+    def _base_of(self, label: str) -> Path | None:
+        for root in self._config.workspace.roots:
+            if root.resolved_label == label:
+                return root.path.expanduser().resolve()
+        return None
 
     def drain(self) -> tuple[set[str], bool]:
         """Everything accumulated since the last drain, and whether the config

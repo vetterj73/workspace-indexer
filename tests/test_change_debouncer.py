@@ -8,12 +8,23 @@ and over.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
 
+from tests.conftest import git_init, write
 from workspace_indexer.config import WorkspaceConfig
 from workspace_indexer.watching import ChangeDebouncer
+
+_IDENTITY = [
+    "-c",
+    "user.email=t@example.com",
+    "-c",
+    "user.name=T",
+    "-c",
+    "commit.gpgsign=false",
+]
 
 
 @pytest.fixture
@@ -141,3 +152,54 @@ def test_a_nested_root_wins_over_its_parent(tmp_path: Path) -> None:
     debouncer.add(inner / "file.py")
 
     assert debouncer.drain()[0] == {"inner"}
+
+
+def test_a_change_inside_a_linked_worktree_wakes_nothing(tmp_path: Path) -> None:
+    """The saving pattern of an agent working in a worktree.
+
+    The walk prunes worktrees, so a reindex triggered by one finds nothing new.
+    Without this the watcher re-walks the whole root on every save an agent
+    makes in its worktree -- repeatedly, to discover nothing.
+    """
+    root = tmp_path / "Root"
+    repo = root / "Product"
+    repo.mkdir(parents=True)
+    write(repo / "auth.py", "x = 1\n")
+    git_init(repo)
+    worktree = root / "Product-feature-a"
+    subprocess.run(
+        ["git", *_IDENTITY, "worktree", "add", "-q", str(worktree), "-b", "feature-a"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    config = WorkspaceConfig.model_validate(
+        {"workspace": {"name": "w", "roots": [{"path": str(root), "label": "root"}]}}
+    )
+    debouncer = ChangeDebouncer(config)
+
+    assert debouncer.add(worktree / "auth.py") is False
+    assert debouncer.add(worktree / "deep" / "nested" / "file.py") is False
+    assert debouncer.drain() == (set(), False)
+
+
+def test_a_change_in_the_main_checkout_still_wakes_its_root(tmp_path: Path) -> None:
+    """The exclusion must not swallow the checkout the worktree came from."""
+    root = tmp_path / "Root"
+    repo = root / "Product"
+    repo.mkdir(parents=True)
+    write(repo / "auth.py", "x = 1\n")
+    git_init(repo)
+    subprocess.run(
+        ["git", *_IDENTITY, "worktree", "add", "-q", str(root / "wt"), "-b", "feature-a"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    config = WorkspaceConfig.model_validate(
+        {"workspace": {"name": "w", "roots": [{"path": str(root), "label": "root"}]}}
+    )
+    debouncer = ChangeDebouncer(config)
+
+    assert debouncer.add(repo / "auth.py") is True
+    assert debouncer.drain() == ({"root"}, False)

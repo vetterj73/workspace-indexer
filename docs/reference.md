@@ -186,6 +186,25 @@ ones or keep a per-host file.
 | `respect_gitignore` | `true` | Honours `.gitignore` per directory. **Only works inside a git repo** — a plain folder has none. |
 | `follow_symlinks` | `false` | |
 | `max_file_bytes` | `1048576` | |
+**Linked worktrees are never indexed by discovery.** A `git worktree add`
+checkout holds the same files as its main checkout at a second path, so
+indexing one duplicates a repository: two chunks of every file competing in
+search, and — worse, because it is silent — route resolution finding two files
+for one endpoint and therefore resolving to *neither*, so cross-repo edges
+disappear rather than duplicate. Measured on this repository: one worktree
+beside its checkout took the walk from 1,136 files to 1,425.
+
+Detection is `git rev-parse --git-dir` against `--git-common-dir`; a worktree
+borrows its repository's object store, so the two differ. The shorter test —
+"`.git` is a file" — is true of **submodules** as well, and would drop vendored
+code from the index; both cases are pinned by tests against real repositories.
+
+The rule applies to *discovered* directories only. A worktree named directly as
+a root in `workspace.yaml` is indexed normally — explicit beats inferred, and
+that is the escape hatch for working inside one. The watcher drops worktree
+changes for the same reason, so an agent saving into a worktree does not
+re-walk the whole root to discover nothing.
+
 | `exclude` | `[]` | gitignore syntax. Excluded directories are *pruned*, not filtered, so `**/node_modules/**` costs one `stat()` rather than a walk. Exclusion is retroactive: adding a pattern removes chunks already indexed. |
 | `secret_allow` | `[]` | Files where the content secret-scan is expected to false-positive — token fixtures, checksum lists. Scoped by glob, so allowing one file does not disable the check elsewhere. |
 
