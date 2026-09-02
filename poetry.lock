@@ -574,6 +574,24 @@ files = [
 markers = {main = "platform_system == \"Windows\" or sys_platform == \"win32\"", dev = "sys_platform == \"win32\""}
 
 [[package]]
+name = "concurrent-log-handler"
+version = "0.9.29"
+description = "RotatingFileHandler replacement with concurrency, gzip and Windows support. Size and time based rotation."
+optional = false
+python-versions = ">=3.6"
+groups = ["main"]
+files = [
+    {file = "concurrent_log_handler-0.9.29-py3-none-any.whl", hash = "sha256:0d6c077fbaef2dae49a25975dcf72a602fe0a6a4ce80a3b7c37696d37e10459a"},
+    {file = "concurrent_log_handler-0.9.29.tar.gz", hash = "sha256:bc37a76d3f384cbf4a98f693ebd770543edc0f4cd5c6ab6bc70e9e1d7d582265"},
+]
+
+[package.dependencies]
+portalocker = ">=2.6.0"
+
+[package.extras]
+dev = ["black (>=26.1.0)", "coverage", "hatch", "pytest", "pytest-cov", "pytest-mock", "pytest-repeat", "pytest-sugar", "ruff (>=0.15.2)"]
+
+[[package]]
 name = "cryptography"
 version = "50.0.1"
 description = "cryptography is a package which provides cryptographic recipes and primitives to Python developers."
@@ -4832,4 +4850,4 @@ watch = ["watchfiles"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.14"
-content-hash = "c643733422ed3c749147bcdfffb70982c21365253aabab973fbb9e47a29676f9"
+content-hash = "57f9ba90d26694743cb10a4585c46587248de640e9b585225fa81573db52fc37"

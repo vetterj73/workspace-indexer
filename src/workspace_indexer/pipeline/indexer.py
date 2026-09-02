@@ -102,6 +102,20 @@ class Indexer:
                 root=only_root or "all",
                 force=force,
             )
+            if force:
+                # Said plainly, at info, once. `force=True` riding inside
+                # run.start's fields is findable only by someone who already
+                # knows to look for it, and the per-file `decision: forced`
+                # lines are debug and can number in the hundreds of thousands.
+                # "Did a full rebuild run at 03:00" should be answerable at a
+                # glance, months later, by someone who has never read this code.
+                log.info(
+                    "run.forced_reindex",
+                    root=only_root or "all",
+                    detail="full reindex requested: mtime and hash shortcuts are "
+                    "ignored, so every file in scope is re-chunked and re-embedded "
+                    "whether or not it changed",
+                )
             if not dry_run:
                 self._manifest.start_run(stats)
                 await self._store.ensure_collection(self._space)
@@ -136,6 +150,10 @@ class Indexer:
                 files_seen=stats.files_seen,
                 files_skipped=stats.files_skipped,
                 files_changed=stats.files_changed,
+                # Present on every run so the field is greppable whether or not
+                # a rebuild happened; zero is the informative answer for "was
+                # this a full reindex" on an ordinary run.
+                files_forced=stats.forced,
                 chunks_upserted=stats.chunks_upserted,
                 chunks_deleted=stats.chunks_deleted,
                 tokens=stats.tokens_embedded,
@@ -273,6 +291,11 @@ class Indexer:
 
         log.debug("file.decision", decision=decision.value, sha=source.sha256[:12])
         stats.files_changed += 1
+        if decision is IndexDecision.FORCED:
+            # Counted, not just logged per file: the per-file lines are debug,
+            # and a run summary that says "1,150 changed" cannot distinguish a
+            # rebuild from a genuinely enormous edit.
+            stats.forced += 1
 
         # Classify once per file. Done here rather than inside the chunkers,
         # which have no business knowing what role a document plays -- their

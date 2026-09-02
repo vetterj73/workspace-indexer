@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import json
 import logging
-import logging.handlers
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 import structlog.testing
+from concurrent_log_handler import ConcurrentRotatingFileHandler
 
 from workspace_indexer.config import FileLogConfig, LoggingConfig
 from workspace_indexer.obs.context import bound, new_run_id
@@ -155,7 +155,9 @@ def test_console_off_leaves_only_the_file_handler(tmp_path: Path) -> None:
     configure_logging(_config(tmp_path))
     handlers = logging.getLogger().handlers
     assert len(handlers) == 1
-    assert isinstance(handlers[0], logging.handlers.RotatingFileHandler)
+    # The concurrent handler, not the stdlib one: several processes can share
+    # a role's file, and the stdlib's rollover cannot survive that on Windows.
+    assert isinstance(handlers[0], ConcurrentRotatingFileHandler)
 
 
 def test_run_ids_are_distinct() -> None:
