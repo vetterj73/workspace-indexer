@@ -137,3 +137,126 @@ def test_atomic_blocks_are_never_carried_into_the_overlap() -> None:
 
 def test_packing_empty_input() -> None:
     assert pack_blocks([], max_tokens=100, kind=FileKind.TEXT) == []
+
+
+# --- issue #3: oversized blocks ------------------------------------------
+
+
+def test_structured_mode_splits_on_unindented_lines() -> None:
+    """A YAML tree with no blank lines is one paragraph to the prose splitter.
+
+    This is the shape that actually overflowed: `mkdocs.yml`'s `nav:` section
+    ran the length of the file with nothing for blank-line splitting to find.
+    """
+    yaml = "nav:\n  - Home: a.md\n  - Guide: b.md\ntheme:\n  name: material\nplugins:\n  - search\n"
+
+    assert len(split_into_blocks(yaml)) == 1
+    assert [b.text.split(":")[0] for b in split_into_blocks(yaml, structured=True)] == [
+        "nav",
+        "theme",
+        "plugins",
+    ]
+
+
+def test_structured_mode_keeps_indented_bodies_with_their_key() -> None:
+    yaml = "nav:\n  - Home: a.md\n  - Guide: b.md\ntheme:\n  name: material\n"
+
+    first = split_into_blocks(yaml, structured=True)[0]
+
+    assert first.text.startswith("nav:")
+    assert "Guide" in first.text
+    assert "theme" not in first.text
+
+
+def test_an_oversized_paragraph_is_cut_at_line_boundaries() -> None:
+    """The data-loss half of #3.
+
+    An uncut 1,200-token block does not stay whole -- the provider truncates it
+    silently and the tail is simply gone. Cutting is the only option that keeps
+    the content.
+    """
+    lines = [f"line {n} with enough words on it to cost real tokens" for n in range(200)]
+    blocks = [Block(start_line=1, end_line=200, text="\n".join(lines))]
+
+    packed = pack_blocks(blocks, max_tokens=100, kind=FileKind.TEXT)
+
+    assert len(packed) > 1
+    assert all(not b.atomic for b in packed)
+    # Nothing lost: every original line survives somewhere.
+    rejoined = "\n".join(b.text for b in packed)
+    assert all(line in rejoined for line in lines)
+
+
+def test_line_numbers_survive_the_cut() -> None:
+    """A hit is useless if it points at the wrong lines."""
+    lines = [f"line {n} with enough words on it to cost real tokens" for n in range(60)]
+    blocks = [Block(start_line=10, end_line=69, text="\n".join(lines))]
+
+    packed = pack_blocks(blocks, max_tokens=100, kind=FileKind.TEXT)
+
+    assert packed[0].start_line == 10
+    assert packed[-1].end_line == 69
+    # Contiguous: no line falls into a gap between two chunks.
+    for index in range(len(packed) - 1):
+        assert packed[index + 1].start_line == packed[index].end_line + 1
+
+
+def test_an_oversized_fence_is_never_cut() -> None:
+    """The guarantee that still holds where it applies.
+
+    Splitting a code fence embeds badly and displays worse, so it is kept whole
+    and reported instead.
+    """
+    body = "\n".join(f"    step_{n}()" for n in range(200))
+    fence = Block(start_line=1, end_line=202, text=f"```python\n{body}\n```", atomic=True)
+
+    packed = pack_blocks([fence], max_tokens=100, kind=FileKind.MARKDOWN)
+
+    assert len(packed) == 1
+    assert packed[0].text.startswith("```python")
+    assert packed[0].text.rstrip().endswith("```")
+
+
+def test_a_single_line_longer_than_the_budget_comes_back_oversized() -> None:
+    """Minified JSON, a base64 blob. There is no boundary to cut on.
+
+    Returned over budget rather than mangled, so the caller can measure it and
+    say so -- which is what makes the truncation reportable as deliberate.
+    """
+    blob = "x" * 20_000
+    packed = pack_blocks(
+        [Block(start_line=1, end_line=1, text=blob)], max_tokens=100, kind=FileKind.TEXT
+    )
+
+    assert len(packed) == 1
+    assert packed[0].text == blob
+
+
+def test_cutting_never_yields_an_empty_block() -> None:
+    """A merged group is rejoined with a blank line.
+
+    Cutting one at that boundary produced a block holding nothing but the
+    separator -- an empty chunk carrying a real line number, which is worse
+    than no chunk at all. Caught by an existing line-number test, which then
+    indexed past the end of the file.
+    """
+    merged = Block(start_line=1, end_line=3, text="alpha\n\nbeta")
+
+    packed = pack_blocks([merged], max_tokens=1, kind=FileKind.TEXT)
+
+    assert all(b.text.strip() for b in packed)
+
+
+def test_a_merged_block_whose_lines_do_not_map_is_left_whole() -> None:
+    """`_merge` rejoins with one blank line whatever the original spacing was.
+
+    When that does not reproduce the file, the offsets are untrustworthy, and a
+    hit citing the wrong lines is worse than one that is merely too long.
+    """
+    # Declares a 10-line span but carries 3 lines: the original had wider gaps.
+    mismatched = Block(start_line=1, end_line=10, text="alpha\n\nbeta")
+
+    packed = pack_blocks([mismatched], max_tokens=1, kind=FileKind.TEXT)
+
+    assert len(packed) == 1
+    assert packed[0].text == "alpha\n\nbeta"

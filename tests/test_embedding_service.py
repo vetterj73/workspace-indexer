@@ -8,6 +8,7 @@ truncated without anyone noticing.
 from __future__ import annotations
 
 import pytest
+import structlog.testing
 from pydantic_ai.exceptions import ModelHTTPError
 
 from tests.fake_embedding_backend import FakeEmbeddingBackend
@@ -169,3 +170,69 @@ async def test_query_retries_too() -> None:
 async def test_space_is_exposed_for_collection_naming() -> None:
     backend = FakeEmbeddingBackend(dimensions=8)
     assert _service(backend).space.dimensions == 8
+
+
+# --- issue #3: telling the two truncations apart -------------------------
+
+
+def _long(word: str = "word") -> str:
+    """Comfortably past a 10-token limit, and identifiable in the preview."""
+    return f"{word} " * 200
+
+
+async def test_truncation_of_an_indivisible_chunk_is_reported_as_the_tradeoff() -> None:
+    """A warning that fires on a known, accepted tradeoff is a warning that
+    gets filtered out -- and it takes the real ones with it."""
+    service = _service(FakeEmbeddingBackend(max_tokens=10))
+
+    with structlog.testing.capture_logs() as logs:
+        await service.embed_documents([_long()], indivisible=[True])
+
+    truncated = [e for e in logs if e["event"] == "embed.truncated"]
+    assert len(truncated) == 1
+    assert truncated[0]["log_level"] == "info"
+    assert truncated[0]["cause"] == "indivisible_block"
+    # Still counted: the vector is still partial, whatever the reason.
+    assert service.stats.truncated == 1
+
+
+async def test_truncation_of_a_divisible_chunk_stays_a_warning() -> None:
+    """The chunker produced something larger than its own budget. That is a
+    defect and has to keep looking like one."""
+    service = _service(FakeEmbeddingBackend(max_tokens=10))
+
+    with structlog.testing.capture_logs() as logs:
+        await service.embed_documents([_long()], indivisible=[False])
+
+    truncated = [e for e in logs if e["event"] == "embed.truncated"]
+    assert len(truncated) == 1
+    assert truncated[0]["log_level"] == "warning"
+    assert truncated[0]["cause"] == "chunker_overshoot"
+
+
+async def test_an_unlabelled_truncation_is_reported_as_the_louder_case() -> None:
+    """Callers that say nothing keep the old behaviour.
+
+    Unknown must not be silently optimistic: a real chunker defect reported at
+    info is a defect nobody sees.
+    """
+    service = _service(FakeEmbeddingBackend(max_tokens=10))
+
+    with structlog.testing.capture_logs() as logs:
+        await service.embed_documents([_long()])
+
+    truncated = [e for e in logs if e["event"] == "embed.truncated"]
+    assert truncated and truncated[0]["log_level"] == "warning"
+
+
+async def test_the_flags_are_matched_to_their_own_text() -> None:
+    """Position matters: mislabelling would report the wrong chunk's cause."""
+    service = _service(FakeEmbeddingBackend(max_tokens=10))
+
+    with structlog.testing.capture_logs() as logs:
+        await service.embed_documents([_long("alpha"), _long("beta")], indivisible=[True, False])
+
+    causes = {
+        str(e["preview"]).split()[0]: e["cause"] for e in logs if e["event"] == "embed.truncated"
+    }
+    assert causes == {"alpha": "indivisible_block", "beta": "chunker_overshoot"}

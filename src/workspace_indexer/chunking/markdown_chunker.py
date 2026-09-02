@@ -17,6 +17,9 @@ from workspace_indexer.chunking.context_header import header_token_cost
 from workspace_indexer.chunking.token_estimate import estimate_tokens
 from workspace_indexer.config import ChunkingSection
 from workspace_indexer.models import Chunk, FileKind, SourceFile
+from workspace_indexer.obs.logging import get_logger
+
+log = get_logger("workspace_indexer.chunking.markdown")
 
 _HEADING = re.compile(r"^(?P<hashes>#{1,6})\s+(?P<title>.+?)\s*#*\s*$")
 _FENCE = re.compile(r"^\s{0,3}(?P<fence>`{3,}|~{3,})\s*(?P<info>.*)$")
@@ -65,6 +68,21 @@ class MarkdownChunker:
             groups = pack_blocks(blocks, max_tokens=budget, kind=file.kind)
             total = len(groups)
             for index, group in enumerate(groups):
+                # A fenced block is deliberately never cut, so this is where
+                # markdown's oversized chunks come from. Said once, at info,
+                # rather than left for the provider to truncate in silence.
+                oversized = estimate_tokens(group.text, file.kind) > budget
+                if oversized:
+                    log.info(
+                        "chunk.indivisible_block",
+                        rel_path=file.rel_path,
+                        tokens=estimate_tokens(group.text, file.kind),
+                        budget=budget,
+                        lines=f"{group.start_line}-{group.end_line}",
+                        detail="a fenced block exceeds the chunk budget and is kept "
+                        "whole on purpose -- cutting a fence embeds badly and displays "
+                        "worse. It may be truncated by the embedding provider.",
+                    )
                 yield build_chunk(
                     file,
                     self._workspace,
@@ -78,6 +96,7 @@ class MarkdownChunker:
                     symbol_path=symbol_path,
                     symbol_kind="heading" if trail else None,
                     symbol_name=trail[-1] if trail else None,
+                    indivisible=oversized,
                 )
 
     @staticmethod

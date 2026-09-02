@@ -41,3 +41,9 @@ class ChunkMeta(BaseModel):
     # True when tree-sitter hit error nodes or no grammar was available, so a
     # quality problem is visible in the payload rather than only in the log.
     parse_degraded: bool = False
+    # This chunk could not be made to fit: a code fence, or a single line
+    # longer than the budget. Recorded so a later truncation at the embedding
+    # provider can be read as the known tradeoff rather than a chunker defect
+    # -- the two look identical from the provider's side and call for opposite
+    # responses.
+    indivisible: bool = False
