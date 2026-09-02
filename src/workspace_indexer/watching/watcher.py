@@ -15,10 +15,14 @@ from pathlib import Path
 # watchfiles ships no py.typed marker, so strict mode cannot see through to
 # awatch's signature. Scoped to the one symbol rather than the module.
 from watchfiles import Change, awatch  # pyright: ignore[reportUnknownVariableType]
+from watchfiles._rust_notify import (  # pyright: ignore[reportUnknownVariableType]
+    WatchfilesRustInternalError,
+)
 
 from workspace_indexer.config import WatchMode, WatchSection, WorkspaceConfig
 from workspace_indexer.obs.logging import get_logger
 from workspace_indexer.watching.change_debouncer import ChangeDebouncer
+from workspace_indexer.watching.exclude_filter import ExcludeFilter
 from workspace_indexer.watching.filesystem_probe import FilesystemProbe
 from workspace_indexer.watching.inotify_budget import InotifyBudget
 
@@ -120,6 +124,29 @@ class Watcher:
             debounce_ms=self._config.watch.debounce_ms,
         )
 
+        try:
+            await self._watch(paths, stop, force_polling)
+        except WatchfilesRustInternalError as exc:
+            # The Rust watcher failed while walking, not while reporting. A
+            # filter cannot prevent this: watchfiles filters changes the
+            # watcher has already produced, so recursion happens first. The
+            # observed trigger is a dangling symlink or broken reparse point
+            # *inside* a directory `index.exclude` already skips -- which means
+            # there is no configuration that avoids it, and a raw traceback
+            # leaves the operator with nothing to act on.
+            log.error(
+                "watch.walk_failed",
+                error=str(exc),
+                detail="the filesystem watcher could not read a path while walking a "
+                "watched root. This happens even for paths index.exclude skips, "
+                "because the OS-level watch descends before any filter runs. The "
+                "error names the path: remove or repair it, then restart watch.",
+            )
+            raise
+
+    async def _watch(
+        self, paths: list[str], stop: asyncio.Event | None, force_polling: bool
+    ) -> None:
         async for batch in awatch(
             *paths,
             stop_event=stop,
@@ -128,6 +155,13 @@ class Watcher:
             force_polling=force_polling,
             poll_delay_ms=self._config.watch.poll_interval_ms,
             recursive=True,
+            # Excluded trees stop waking a reindex. Does not prevent the walk
+            # -- see ExcludeFilter -- but removes the work after it.
+            watch_filter=ExcludeFilter(self._config),
+            # A directory we cannot read is not a reason to kill the watch.
+            # Partial mitigation only: the observed Windows failure is an IO
+            # error rather than a permission one, and this does not cover it.
+            ignore_permission_denied=True,
         ):
             await self.handle_changes(batch)
 

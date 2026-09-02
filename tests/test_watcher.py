@@ -12,14 +12,19 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from pathlib import Path
+from unittest.mock import patch
 
+import pytest
 import structlog.testing
 
 # watchfiles ships no py.typed marker; scoped to the one symbol.
 from watchfiles import Change  # pyright: ignore[reportUnknownVariableType]
+from watchfiles._rust_notify import (  # pyright: ignore[reportUnknownVariableType]
+    WatchfilesRustInternalError,
+)
 
 from workspace_indexer.config import WatchMode, WorkspaceConfig
-from workspace_indexer.watching import FilesystemProbe, InotifyBudget, Watcher
+from workspace_indexer.watching import ExcludeFilter, FilesystemProbe, InotifyBudget, Watcher
 
 LOCAL_MOUNTS = "/dev/sda2 / ext4 rw 0 0\n/dev/sda3 /tmp ext4 rw 0 0\n"
 
@@ -256,3 +261,60 @@ async def test_a_half_written_config_does_not_kill_the_watcher(tmp_path: Path) -
         await watcher.handle_changes({(Change.modified, str(tmp_path / "workspace.yaml"))})
 
     assert [e for e in logs if e["event"] == "watch.config_invalid"]
+
+
+# --- surviving a walk the OS refuses ------------------------------------
+
+
+async def test_a_rust_walk_failure_is_logged_with_something_to_act_on(tmp_path: Path) -> None:
+    """The reported Windows crash, made diagnosable.
+
+    A dangling symlink inside an `index.exclude`d tree killed the watcher with
+    a raw traceback. It cannot be prevented -- watchfiles filters changes the
+    Rust watcher has already produced, so recursion happens first -- so the
+    obligation is to say what happened and what to do, and to leave a record
+    after the terminal is gone.
+    """
+    watcher = _watcher(_config(tmp_path))
+
+    async def explode(*_: object, **__: object) -> None:
+        raise WatchfilesRustInternalError(
+            "error in underlying watcher: IO error for operation on "
+            r"C:\x\.ralph\tasks: The file cannot be accessed by the system. (os error 1920)"
+        )
+
+    with (
+        patch.object(Watcher, "_watch", explode),
+        structlog.testing.capture_logs() as logs,
+        pytest.raises(WatchfilesRustInternalError),
+    ):
+        await watcher.run()
+
+    failed = [entry for entry in logs if entry["event"] == "watch.walk_failed"]
+    assert len(failed) == 1
+    assert "os error 1920" in failed[0]["error"]
+    # The path is in the error, and the detail says why config cannot help.
+    assert "index.exclude" in failed[0]["detail"]
+
+
+async def test_the_watch_filter_and_permission_flag_are_passed_to_awatch(
+    tmp_path: Path,
+) -> None:
+    """Both are easy to drop in a refactor and neither has a visible symptom.
+
+    Without the filter, excluded trees quietly wake reindexes again; without
+    the flag, an unreadable directory is fatal where it need not be.
+    """
+    watcher = _watcher(_config(tmp_path))
+    seen: dict[str, object] = {}
+
+    async def capture(*paths: object, **kwargs: object):  # type: ignore[no-untyped-def]
+        seen.update(kwargs)
+        return
+        yield  # pragma: no cover - makes this an async generator
+
+    with patch("workspace_indexer.watching.watcher.awatch", capture):
+        await watcher.run()
+
+    assert isinstance(seen["watch_filter"], ExcludeFilter)
+    assert seen["ignore_permission_denied"] is True
