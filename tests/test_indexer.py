@@ -220,6 +220,54 @@ async def test_force_reembeds_everything(harness: Harness) -> None:
     assert stats.files_skipped == 0
 
 
+async def test_a_forced_run_says_so_in_one_readable_line(harness: Harness) -> None:
+    """Issue #60. `force=True` rode inside run.start's fields and nowhere else.
+
+    Confirming a rebuild happened meant knowing to grep run.start for a boolean,
+    or counting `decision: forced` lines across a debug log that can run to
+    hundreds of thousands of entries. "Did a full reindex run at 03:00" should
+    be answerable at a glance by someone who has never read this code.
+    """
+    await harness.indexer().run()
+
+    with structlog.testing.capture_logs() as logs:
+        await harness.indexer().run(force=True)
+
+    forced = [e for e in logs if e["event"] == "run.forced_reindex"]
+    assert len(forced) == 1
+    assert forced[0]["log_level"] == "info"
+    assert "every file in scope" in forced[0]["detail"]
+
+
+async def test_an_ordinary_run_stays_quiet_about_force(harness: Harness) -> None:
+    """A line that appears on every run is a line nobody reads."""
+    with structlog.testing.capture_logs() as logs:
+        await harness.indexer().run()
+
+    assert not [e for e in logs if e["event"] == "run.forced_reindex"]
+
+
+async def test_the_run_summary_counts_the_files_force_reindexed(harness: Harness) -> None:
+    """`files_changed` alone cannot tell a rebuild from an enormous edit.
+
+    Reported on every run, not only forced ones: zero is the informative answer
+    to "was this a full reindex", and a field that only sometimes exists cannot
+    be grepped for.
+    """
+    await harness.indexer().run()
+
+    ordinary = await harness.indexer().run()
+    assert ordinary.forced == 0
+
+    rebuilt = await harness.indexer().run(force=True)
+    assert rebuilt.forced == rebuilt.files_changed > 0
+
+    with structlog.testing.capture_logs() as logs:
+        await harness.indexer().run(force=True)
+    ended = [e for e in logs if e["event"] == "run.end"]
+    assert ended and ended[0]["files_forced"] > 0
+
+
 async def test_model_swap_backfills_without_touching_the_old_space(
     harness: Harness,
 ) -> None:

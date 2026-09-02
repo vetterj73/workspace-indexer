@@ -65,6 +65,15 @@ coverage per language. Reports `inconsistent` when the manifest and the store
 disagree about how many chunks exist — usually a store rebuilt without the
 manifest, which `index --force` fixes.
 
+A `--force` run announces itself. `run.forced_reindex` is logged once at info
+with what it means, and `run.end` carries `files_forced` on **every** run —
+zero being the informative answer to "was this a full rebuild". Previously
+`force` rode inside `run.start`'s fields, findable only by someone who already
+knew to look, and the per-file `decision: forced` lines are debug and can run
+to hundreds of thousands. Note that `.env`'s `LOG_LEVEL` overrides
+`logging.level`, so a `LOG_LEVEL=WARNING` keeps this out of the console — it is
+always in the JSONL, which is always DEBUG.
+
 ### `grounding`
 
 Per repository, whether the index can answer **why** the code is the way it is.
@@ -338,13 +347,29 @@ at all is a layout or partial and declares nothing.
 the command is spliced in before the suffix, so `index` writes
 `workspace-indexer-index.jsonl` and `serve` writes `workspace-indexer-serve.jsonl`.
 
-This is not tidiness, it is a correctness fix. `RotatingFileHandler` *renames*
-the live file on rollover, and **Windows refuses to rename a file another
-process holds open** — so a long-running `serve` and a concurrent reindex
-collide with `WinError 32` and one of them dies. POSIX permits the rename,
-which is why this never appears on Linux: the orphaned handle goes on writing
-to an inode nobody can find. Losing the log quietly is the better of the two
-failures and still not one worth having.
+This is not tidiness, it is a correctness fix. The stdlib
+`RotatingFileHandler` *renames* the live file on rollover, and **Windows
+refuses to rename a file another process holds open** — so a long-running
+`serve` and a concurrent reindex collide with `WinError 32` and one of them
+dies.
+
+Roles are not the whole story, because one role can have several live
+processes: every Claude Code session in a workspace spawns its own `serve`. The
+file sink is therefore `ConcurrentRotatingFileHandler`, which locks around
+appends and rollover.
+
+**This is not a Windows-only problem**, which is what it looked like at first.
+Measured on Linux with three processes writing one role's file through the
+stdlib handler: **346 of 360 lines survived**, and rollover raised
+`FileNotFoundError` as two processes raced to rename the same file. Windows
+adds a fatal `WinError 32`; POSIX just loses lines quietly, which is the worse
+half. A test pins the line count, because every weaker assertion — intact JSON,
+every writer represented, rollover happened — passed with the broken handler.
+
+Putting the PID in the file name was the alternative and was rejected:
+`backup_count` would then mean that many backups *per process*, so the ceiling
+this config documents would stop being true and grow with session count.
+Sessions stay tellable apart by the `run_id` every line already carries.
 
 It also keeps both readable. A full reindex would otherwise bury a session's
 worth of MCP queries in the same file, and the MCP half is the one you want

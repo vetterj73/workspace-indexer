@@ -11,11 +11,11 @@ needed to see. The file is JSON lines so it can be queried with jq:
 from __future__ import annotations
 
 import logging
-import logging.handlers
 from pathlib import Path
 from typing import Any
 
 import structlog
+from concurrent_log_handler import ConcurrentRotatingFileHandler
 
 from workspace_indexer.config import LoggingConfig
 
@@ -166,7 +166,20 @@ def _file_handler(
     # Size-based rather than time-based rotation: indexer output is bursty. A
     # full reindex writes everything in minutes then goes quiet for days, so
     # rotating daily would give one enormous file and nine empty ones.
-    handler = logging.handlers.RotatingFileHandler(
+    #
+    # Concurrent rather than the stdlib's RotatingFileHandler, because one role
+    # can have several live processes: every Claude Code session in a workspace
+    # spawns its own `serve`. The stdlib handler renames the live file on
+    # rollover, which Windows refuses while another process holds it open, and
+    # its appends are not serialised between processes either -- so the failure
+    # was a WinError 32 or a torn JSONL line, depending on timing.
+    #
+    # This locks around both, which is why the alternative was rejected:
+    # putting the PID in the file name would avoid the sharing, but then
+    # `backup_count` means that many backups *per process*, and the ceiling the
+    # config documents stops being true. Sessions stay tellable apart by the
+    # `run_id` every line already carries.
+    handler = ConcurrentRotatingFileHandler(
         path,
         maxBytes=cfg.file.max_bytes,
         backupCount=cfg.file.backup_count,
@@ -174,7 +187,12 @@ def _file_handler(
         # Opened on first write rather than at startup, so a command that
         # logs nothing leaves no empty file behind -- and so a config-only
         # failure does not create one before it aborts.
-        delay=True,
+        #
+        # The suppression is an upstream annotation bug, not a real mismatch:
+        # concurrent_log_handler declares `delay: None = None` while using it
+        # as a flag, exactly as the stdlib handler it replaces does. Behaviour
+        # is pinned by test_a_command_that_logs_nothing_leaves_no_file.
+        delay=True,  # pyright: ignore[reportArgumentType]
     )
     handler.setLevel(logging.DEBUG)
     handler.setFormatter(

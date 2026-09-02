@@ -38,6 +38,11 @@ class RunStats(BaseModel):
     # Files this run would have removed from the index but did not, because
     # the deletion looked more like a bad checkout than a real removal.
     # Counted rather than logged alone: a warning in CI output is not a brake.
+    # Files reindexed because --force was given rather than because they
+    # changed. Counted so a completed run can be shown to have been a full
+    # rebuild: `force` on run.start says one was *requested*, and a run that
+    # died halfway says the same thing.
+    forced: int = 0
     deletions_withheld: int = 0
     errors: int = 0
     config_hash: str = ""
