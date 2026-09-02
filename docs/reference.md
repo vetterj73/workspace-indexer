@@ -262,9 +262,32 @@ rules, not preferences.
 | `text.max_tokens` | `512` | |
 | `text.overlap_paragraphs` | `1` | |
 | `opaque.mode` | `metadata_only` | Binary and image files: recorded, not embedded. |
+| — | — | **YAML, TOML, INI and `.properties` split on unindented lines** as well as blank ones. A `nav:` tree has no blank lines in it, so the prose splitter saw one paragraph the length of the file. |
 | — | — | **PDFs have no settings of their own** and use `markdown.max_tokens`. They are prose, and a second knob would be one more thing to tune with no evidence it wants a different value. |
 | `embed_doc_type` | `false` | Also write `# type: normative` into the embedded text. **Off on measured evidence**: it dropped recall@10 from 0.875 to 0.812, and worst on the guidance cases it was meant to help. `doc_type` has nine values across thousands of chunks, so the line carries almost no discriminating signal. Changing it needs `index --force` — the header is excluded from `content_sha`, so a normal run finds identical chunk ids and re-embeds nothing. |
 | `overrides` | `{}` | Pin an extension to a chunker: `{".mdx": "markdown"}`. The extension point for a file type whose detected language routes it somewhere unhelpful. |
+
+**Nothing silently loses its tail.** A block that overflows the budget is cut
+at line boundaries — except a fenced code block, which is kept whole because
+cutting a fence embeds badly and displays worse. That exception is now *said*
+rather than left to be discovered: `chunk.indivisible_block` logs at info with
+the file, the line range and the reason.
+
+Measured on a 1,153-file workspace: 31 chunks are indivisible, all of them
+markdown code fences, and **none exceeds the model's 32K input limit** — so
+nothing actually truncates against `voyage-code-4`. Before this, structured
+config files accounted for a further 12, and those were silently losing their
+tails.
+
+`embed.truncated` says which of the two it is:
+
+| `cause` | level | meaning |
+|---|---|---|
+| `indivisible_block` | info | one block could not be made smaller; the tradeoff worked as designed |
+| `chunker_overshoot` | **warning** | a chunk exceeded the limit without being marked indivisible — the chunker produced something larger than its own budget, which is a defect |
+
+A warning that fires on a known, accepted tradeoff is a warning that gets
+filtered out, and it takes the real ones with it.
 
 ### 2.4 `graph`
 

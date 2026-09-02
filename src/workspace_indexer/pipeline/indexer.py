@@ -379,7 +379,13 @@ class Indexer:
 
         if to_embed:
             texts = [chunk.embed_text for chunk in to_embed]
-            dense = await self._embeddings.embed_documents(texts)
+            dense = await self._embeddings.embed_documents(
+                texts,
+                # So a truncation at the provider can be reported as the known
+                # tradeoff rather than as a chunker defect. The two are
+                # indistinguishable from inside the embedding layer.
+                indivisible=[chunk.meta.indivisible for chunk in to_embed],
+            )
             sparse = self._sparse.encode_documents(texts)
             await self._store.upsert(self._space, to_embed, dense, sparse)
             stats.chunks_upserted += len(to_embed)

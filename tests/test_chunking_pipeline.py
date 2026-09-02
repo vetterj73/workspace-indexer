@@ -9,8 +9,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tests.conftest import ConfigFactory
+import structlog.testing
+
+from tests.conftest import ConfigFactory, make_source
 from workspace_indexer.chunking import ChunkerRegistry, read_source
+from workspace_indexer.chunking.text_chunker import TextChunker
+from workspace_indexer.chunking.token_estimate import estimate_tokens
+from workspace_indexer.config import ChunkingSection
 from workspace_indexer.discovery import Walker
 from workspace_indexer.models import Chunk, FileKind
 
@@ -118,3 +123,73 @@ def test_chunking_is_deterministic(config_for: ConfigFactory) -> None:
     first = {c.chunk_id for c in _index(config_for)}
     second = {c.chunk_id for c in _index(config_for)}
     assert first == second
+
+
+# --- issue #3: nothing silently loses its tail ---------------------------
+
+
+def _nav_yaml(entries: int) -> str:
+    """The reported offender: a `nav:` tree with no blank lines in it."""
+    nav = "\n".join(f"  - Page {n} Title Here: reference/page-{n}.md" for n in range(entries))
+    return f"site_name: Docs\n\nnav:\n{nav}\n\ntheme:\n  name: material\n"
+
+
+def test_a_large_yaml_tree_no_longer_produces_an_oversized_chunk() -> None:
+    """`mkdocs.yml`'s nav section, which overflowed by 73-726 tokens.
+
+    To the prose splitter the whole tree is one paragraph, so it became a
+    single oversized chunk whose tail the provider then discarded in silence.
+    """
+    source = make_source(
+        _nav_yaml(300), kind=FileKind.TEXT, language="yaml", rel_path="docs/mkdocs.yml"
+    )
+    config = ChunkingSection.model_validate({"text": {"max_tokens": 200}})
+
+    chunks = list(TextChunker("w").chunk(source, config))
+
+    assert len(chunks) > 1
+    assert not any(c.meta.indivisible for c in chunks)
+    for chunk in chunks:
+        assert estimate_tokens(chunk.source_text, FileKind.TEXT) <= 200
+
+
+def test_no_content_is_lost_when_a_structured_file_is_split() -> None:
+    """The acceptance criterion: the tail must still be in the index."""
+    source = make_source(
+        _nav_yaml(300), kind=FileKind.TEXT, language="yaml", rel_path="docs/mkdocs.yml"
+    )
+    config = ChunkingSection.model_validate({"text": {"max_tokens": 200}})
+
+    rejoined = "\n".join(c.source_text for c in TextChunker("w").chunk(source, config))
+
+    assert "page-0.md" in rejoined
+    assert "page-299.md" in rejoined
+    assert "name: material" in rejoined
+
+
+def test_an_indivisible_line_is_marked_and_announced() -> None:
+    """Minified JSON: one line, no boundary to cut on.
+
+    Kept whole and flagged, so a later truncation reads as the known tradeoff
+    rather than as a chunker defect.
+    """
+    source = make_source(
+        '{"a":' + '"x"' * 4000 + "}", kind=FileKind.TEXT, language="json", rel_path="d/big.json"
+    )
+    config = ChunkingSection.model_validate({"text": {"max_tokens": 200}})
+
+    with structlog.testing.capture_logs() as logs:
+        chunks = list(TextChunker("w").chunk(source, config))
+
+    assert len(chunks) == 1
+    assert chunks[0].meta.indivisible is True
+    announced = [e for e in logs if e["event"] == "chunk.indivisible_block"]
+    assert announced and announced[0]["log_level"] == "info"
+
+
+def test_an_ordinary_file_is_not_marked_indivisible() -> None:
+    """The flag has to mean something, so it must not be set by default."""
+    source = make_source("short enough\n\nto fit comfortably\n", kind=FileKind.TEXT)
+    config = ChunkingSection.model_validate({"text": {"max_tokens": 200}})
+
+    assert not any(c.meta.indivisible for c in TextChunker("w").chunk(source, config))

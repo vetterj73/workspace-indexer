@@ -22,6 +22,7 @@ def build_chunk(
     symbol_kind: str | None = None,
     symbol_name: str | None = None,
     parse_degraded: bool = False,
+    indivisible: bool = False,
     include_header: bool = True,
 ) -> Chunk:
     header = build_header(file, symbol_path, symbol_kind) if include_header else ""
@@ -49,6 +50,7 @@ def build_chunk(
         chunker=chunker,
         chunker_version=version,
         parse_degraded=parse_degraded,
+        indivisible=indivisible,
     )
     return Chunk(
         meta=meta,

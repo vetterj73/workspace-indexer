@@ -52,12 +52,23 @@ class EmbeddingService:
     def space(self) -> EmbeddingSpace:
         return self._backend.space
 
-    async def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
-        """Vectors aligned one-to-one with `texts`, in the same order."""
+    async def embed_documents(
+        self, texts: Sequence[str], *, indivisible: Sequence[bool] | None = None
+    ) -> list[list[float]]:
+        """Vectors aligned one-to-one with `texts`, in the same order.
+
+        `indivisible` marks texts the producer could not make any shorter -- a
+        code fence, a single enormous line. It changes only how a truncation is
+        *reported*, never what is sent. A text that overflows because nothing
+        could be done about it and one that overflows because the chunker
+        overshot its budget look identical from here, and they call for
+        opposite responses: accept the tradeoff, or fix the chunker. Omitted
+        means unknown, and truncation is then reported as the louder case.
+        """
         if not texts:
             return []
 
-        await self._warn_on_truncation(texts)
+        await self._warn_on_truncation(texts, indivisible)
         batches = self._batch(texts)
         log.debug("embed.plan", documents=len(texts), batches=len(batches))
 
@@ -206,26 +217,43 @@ class EmbeddingService:
                 self.stats.requests += 1
                 return result
 
-    async def _warn_on_truncation(self, texts: Sequence[str]) -> None:
+    async def _warn_on_truncation(
+        self, texts: Sequence[str], indivisible: Sequence[bool] | None
+    ) -> None:
         """Silent truncation is the classic invisible quality bug: the call
         succeeds, the vector is wrong, and nothing says so."""
         limit = await self._backend.max_input_tokens()
         if not limit:
             return
         gate = int(limit * _EXACT_COUNT_THRESHOLD)
-        for text in texts:
+        for index, text in enumerate(texts):
             if estimate_tokens(text, FileKind.CODE) < gate:
                 continue
             exact = await self._backend.count_tokens(text)
-            if exact > limit:
-                self.stats.truncated += 1
-                log.warning(
-                    "embed.truncated",
-                    tokens=exact,
-                    max_input_tokens=limit,
-                    excess=exact - limit,
-                    preview=text[:120],
-                )
+            if exact <= limit:
+                continue
+            self.stats.truncated += 1
+            expected = bool(indivisible and index < len(indivisible) and indivisible[index])
+            # Info, not warning, when nothing could have been done. A warning
+            # that fires on a known and accepted tradeoff is a warning that
+            # gets filtered out, taking the real ones with it.
+            emit = log.info if expected else log.warning
+            emit(
+                "embed.truncated",
+                cause="indivisible_block" if expected else "chunker_overshoot",
+                tokens=exact,
+                max_input_tokens=limit,
+                excess=exact - limit,
+                detail=(
+                    "one indivisible block exceeds the model's input limit; its tail "
+                    "is not embedded. Nothing upstream can split it further."
+                    if expected
+                    else "a chunk exceeded the model's input limit without being marked "
+                    "indivisible, so the chunker produced something larger than its own "
+                    "budget. Its tail is not embedded."
+                ),
+                preview=text[:120],
+            )
 
     def _check_dimensions(self, vectors: list[list[float]]) -> None:
         expected = self._backend.space.dimensions
