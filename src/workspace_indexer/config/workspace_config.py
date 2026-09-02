@@ -48,6 +48,25 @@ class WorkspaceConfig(Strict):
         """
         return {self.eval.dataset.expanduser().resolve()}
 
+    def root_containing(self, path: Path) -> RootConfig | None:
+        """The configured root that holds `path`, or None if no root does.
+
+        Longest match wins, so a root nested inside another is attributed to
+        the more specific one. Lives here rather than in the watcher because
+        two callers now need the same answer -- the debouncer deciding which
+        root to reindex, and the watch filter deciding whether to care at all
+        -- and two copies of a prefix comparison is two chances to disagree
+        about which root owns a file.
+        """
+        best: tuple[int, RootConfig] | None = None
+        for root in self.workspace.roots:
+            base = root.path.expanduser().resolve()
+            if path == base or base in path.parents:
+                depth = len(base.parts)
+                if best is None or depth > best[0]:
+                    best = (depth, root)
+        return best[1] if best else None
+
     def root_by_label(self, label: str) -> RootConfig:
         for root in self.workspace.roots:
             if root.resolved_label == label:

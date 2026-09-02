@@ -165,6 +165,33 @@ Run the MCP server over stdio. See §4.
 Watch the roots and reindex as files change. A trigger, not a second indexing
 path: every change goes through the same `index --root` the CLI performs.
 
+`index.exclude` is applied to events, so a write inside `node_modules` or
+`.ralph` no longer wakes a reindex. It is layered on watchfiles' own defaults
+rather than replacing them, so editor scratch files (`.swp`, `~`, `.pyc`) stay
+ignored too.
+
+**What that does not do is stop the watcher descending into an excluded
+directory.** watchfiles filters changes the underlying Rust watcher has already
+produced, so recursion happens first and filtering second. If a path inside an
+excluded tree cannot be read at all — a dangling symlink, a broken Windows
+reparse point — the walk still fails, and no configuration avoids it. When that
+happens the watcher logs `watch.walk_failed` naming the path and saying why
+`index.exclude` could not help, instead of dying with a raw traceback. Remove or
+repair the path and restart. `ignore_permission_denied` is set, which covers the
+permission case but not that IO one.
+
+Failures are logged as well as printed. A watcher runs unattended, so a
+console-only report is a report to nobody:
+
+| event | when |
+|---|---|
+| `watch.reindex_failed` | one root's reindex raised; the watcher keeps going |
+| `watch.crashed` | anything raised out of the watch loop; the process ends |
+| `watch.stopped` | clean exit, with `reason` of `completed` or `interrupted` |
+
+The terminator matters: a log ending at `watch.start` used to be ambiguous
+between crashed, killed and still running.
+
 ---
 
 ## 2. `workspace.yaml`

@@ -33,6 +33,7 @@ from workspace_indexer.graph import SUPPORTED as IMPORT_LANGUAGES
 from workspace_indexer.grounding import CoverageService, SourceStrength, UnitCoverage
 from workspace_indexer.mcp import QueryService, TaxonomyService
 from workspace_indexer.models import EmbeddingSpace, FileKind, RunStats, SearchFilters
+from workspace_indexer.obs.logging import get_logger
 from workspace_indexer.search import Reprojector, SearchRequest
 from workspace_indexer.storage import StoreMirror, build_vector_store
 
@@ -42,6 +43,10 @@ app = typer.Typer(
     help="Semantic + keyword index over a multi-repo workspace.",
 )
 console = Console()
+
+# Named for the command it serves, so a JSONL reader can tell a watcher's own
+# failures from the indexer failures it triggers.
+watch_log = get_logger("workspace_indexer.cli.watch")
 
 ConfigOption = Annotated[Path | None, typer.Option("--config", "-c", help="Path to workspace.yaml")]
 
@@ -722,6 +727,18 @@ def watch(config: ConfigOption = None) -> None:
             except Exception as exc:
                 # A watcher that dies on one bad reindex is worse than one that
                 # reports it and keeps watching.
+                #
+                # Logged as well as printed. The console is gone the moment the
+                # terminal closes, and a watcher is meant to run unattended --
+                # so a console-only report means the only record of a failure
+                # is the one nobody was looking at.
+                watch_log.error(
+                    "watch.reindex_failed",
+                    root=root,
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                    exc_info=True,
+                )
                 console.print(f"[red]reindex of {root} failed: {exc}[/red]")
                 return
             console.print(
@@ -741,7 +758,22 @@ def watch(config: ConfigOption = None) -> None:
         try:
             await watcher.run()
         except KeyboardInterrupt:
-            pass
+            watch_log.info("watch.stopped", reason="interrupted")
+        except Exception as exc:
+            # Anything raised outside the per-root reindex -- a bad path, a
+            # lock, a failure inside the watcher itself. Previously this left
+            # the JSONL ending at `watch.start` with nothing after it while the
+            # process visibly died, so the only evidence was on screen.
+            watch_log.error(
+                "watch.crashed",
+                error=str(exc),
+                error_type=type(exc).__name__,
+                exc_info=True,
+            )
+            console.print(f"[red]watch failed: {exc}[/red]")
+            raise
+        else:
+            watch_log.info("watch.stopped", reason="completed")
         finally:
             await ctx.close()
 

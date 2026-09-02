@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from workspace_indexer.config import WatchMode
 from workspace_indexer.watching.change_debouncer import ChangeDebouncer
+from workspace_indexer.watching.exclude_filter import ExcludeFilter
 from workspace_indexer.watching.filesystem_probe import (
     NATIVE_FILESYSTEMS,
     FilesystemProbe,
@@ -15,6 +16,7 @@ __all__ = [
     "NATIVE_FILESYSTEMS",
     "UNWATCHED_DIRS",
     "ChangeDebouncer",
+    "ExcludeFilter",
     "FilesystemProbe",
     "InotifyBudget",
     "WatchMode",
